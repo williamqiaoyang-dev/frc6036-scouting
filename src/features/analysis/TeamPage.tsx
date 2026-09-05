@@ -9,6 +9,7 @@ import {
 import { db } from '@/lib/db'
 import type { CachedEvent } from '@/lib/schema'
 import { matchLabel, teamMatches as tbaTeamMatches, teamRanking } from '@/lib/tba'
+import { MatchHistory, RobotPhoto, TeamIdentity } from './TeamHeader'
 import { MatchVideo } from '@/features/video/MatchVideo'
 import { percentile, totalsByWindow } from '@/lib/stats'
 import { Card, Empty, Pill, SectionTitle, StatTile, percentileColor } from '@/components/ui'
@@ -27,7 +28,8 @@ export default function TeamPage() {
   const [event, setEvent] = useState<CachedEvent | null>(null)
   useEffect(() => { db.events.get(eventKey).then((e) => setEvent(e ?? null)) }, [eventKey])
   const ranking = teamRanking(event, team)
-  const videos = tbaTeamMatches(event, team).filter((m) => m.videos.length > 0)
+  const allTbaMatches = tbaTeamMatches(event, team)
+  const videos = allTbaMatches.filter((m) => m.videos.length > 0)
 
   const summary = summaries.find((s) => s.teamNumber === team)
   const teamMatches = useMemo(
@@ -101,12 +103,8 @@ export default function TeamPage() {
   if (summary.matchesPlayed === 0) {
     return (
       <div className="mx-auto max-w-7xl space-y-4 p-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <Link to="/analysis" className="text-sm text-slate-500 hover:text-slate-300">← All teams</Link>
-          <h1 className="font-mono text-3xl font-extrabold text-slate-100">{team}</h1>
-          <Pill tone="amber">Not scouted</Pill>
-          {headerPills}
-        </div>
+        <TeamIdentity event={event} team={team}
+          extraPills={<><Pill tone="amber">Not scouted</Pill>{headerPills}</>} />
 
         <Empty title="No match data from our scouts"
           hint={ranking
@@ -123,6 +121,11 @@ export default function TeamPage() {
           </div>
         )}
 
+        <div className="grid gap-4 lg:grid-cols-2">
+          <RobotPhoto event={event} team={team} />
+          <MatchHistory event={event} team={team} matches={allTbaMatches} />
+        </div>
+
         {videoSection}
         {pit && <PitSheet game={game} pit={pit} team={team} />}
       </div>
@@ -137,14 +140,13 @@ export default function TeamPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-4 p-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <Link to="/analysis" className="text-sm text-slate-500 hover:text-slate-300">← All teams</Link>
-        <h1 className="font-mono text-3xl font-extrabold text-slate-100">{team}</h1>
-        <Pill>{summary.matchesPlayed} matches</Pill>
-        {headerPills}
-        {summary.noShows > 0 && <Pill tone="red">{summary.noShows} no-show</Pill>}
-        {summary.breakdownRate > 0.2 && <Pill tone="amber">Reliability risk</Pill>}
-      </div>
+      <TeamIdentity event={event} team={team}
+        extraPills={<>
+          <Pill>{summary.matchesPlayed} scouted</Pill>
+          {headerPills}
+          {summary.noShows > 0 && <Pill tone="red">{summary.noShows} no-show</Pill>}
+          {summary.breakdownRate > 0.2 && <Pill tone="amber">Reliability risk</Pill>}
+        </>} />
 
       {/* --------------------------------------------------------- headline */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
@@ -241,6 +243,12 @@ export default function TeamPage() {
             <Empty title="No super-scout data" hint="Rate this alliance from the Super tab." />
           )}
         </Card>
+      </div>
+
+      {/* ------------------------------------------- robot + match history */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <RobotPhoto event={event} team={team} />
+        <MatchHistory event={event} team={team} matches={allTbaMatches} />
       </div>
 
       {/* ----------------------------------------------------------- video */}

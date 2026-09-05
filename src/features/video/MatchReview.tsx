@@ -3,12 +3,14 @@ import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { db } from '@/lib/db'
 import { getGame } from '@/games'
-import type { CachedEvent, CachedMatch } from '@/lib/schema'
+import type { CachedEvent, CachedMatch, MarkerRecord } from '@/lib/schema'
 import { loadSettings } from '@/lib/settings'
 import { byMostRecent, matchLabel } from '@/lib/tba'
 import { actionTotals, scoreBreakdown } from '@/lib/stats'
 import { Card, Empty, Pill, SectionTitle } from '@/components/ui'
 import { MatchVideo } from './MatchVideo'
+import { VideoPlayer, type PlayerHandle } from './VideoPlayer'
+import { MarkerPanel } from './MarkerPanel'
 
 /**
  * Match review: TBA footage beside what the scouts actually recorded.
@@ -26,6 +28,9 @@ export default function MatchReview() {
   const [selected, setSelected] = useState<CachedMatch | null>(null)
   const [records, setRecords] = useState<any[]>([])
   const [onlyWithVideo, setOnlyWithVideo] = useState(false)
+  const [player, setPlayer] = useState<PlayerHandle | null>(null)
+  const [markers, setMarkers] = useState<MarkerRecord[]>([])
+  const [markerBump, setMarkerBump] = useState(0)
 
   useEffect(() => {
     db.events.get(settings.eventKey).then((e) => setEvent(e ?? null))
@@ -41,6 +46,14 @@ export default function MatchReview() {
   useEffect(() => {
     if (!selected && played.length) setSelected(played[0])
   }, [played, selected])
+
+  useEffect(() => {
+    if (!selected) { setMarkers([]); return }
+    db.markers.where('matchKey').equals(selected.key).toArray().then(setMarkers)
+  }, [selected, markerBump])
+
+  // A new video means the old player handle is gone.
+  useEffect(() => { setPlayer(null) }, [selected?.key])
 
   useEffect(() => {
     if (!selected) { setRecords([]); return }
@@ -107,7 +120,27 @@ export default function MatchReview() {
       {/* ----------------------------------------------------------- detail */}
       {selected && (
         <div className="space-y-4">
-          <MatchVideo match={selected} label={matchLabel(selected)} />
+          {selected.videos.find((v) => v.type === 'youtube') ? (
+            <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
+              <VideoPlayer
+                videoId={selected.videos.find((v) => v.type === 'youtube')!.key.split('?')[0]}
+                markers={markers}
+                onReady={setPlayer}
+              />
+              <Card className="max-h-[70vh] overflow-y-auto">
+                <MarkerPanel
+                  match={selected}
+                  eventKey={settings.eventKey}
+                  author={settings.scoutName || 'anonymous'}
+                  player={player}
+                  markers={markers}
+                  onChange={() => setMarkerBump((n) => n + 1)}
+                />
+              </Card>
+            </div>
+          ) : (
+            <MatchVideo match={selected} label={matchLabel(selected)} />
+          )}
 
           {/* Official score from TBA */}
           <Card>

@@ -3,20 +3,25 @@ import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { percentile } from '@/lib/stats'
 import { Card, Empty, percentileColor } from '@/components/ui'
+import { teamInfo } from '@/lib/tba'
 import { useEventData } from './useEventData'
 
 type Filter = 'all' | 'scouted' | 'unscouted'
 
 /** Sortable event-wide table. The first stop when picking who to look at. */
 export default function TeamList() {
-  const { game, summaries, scouted, unscouted, roster, loading, eventKey, eventName } = useEventData()
+  const { game, event, summaries, scouted, unscouted, roster, loading, eventKey, eventName } = useEventData()
   const [sortBy, setSortBy] = useState(game.keyMetrics[0]?.id ?? '')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
 
   const rows = useMemo(() => {
     const filtered = summaries.filter((s) => {
-      if (query && !String(s.teamNumber).includes(query.trim())) return false
+      if (query) {
+        const q = query.trim().toLowerCase()
+        const name = teamInfo(event, s.teamNumber)?.nickname?.toLowerCase() ?? ''
+        if (!String(s.teamNumber).includes(q) && !name.includes(q)) return false
+      }
       if (filter === 'scouted') return s.matchesPlayed > 0
       if (filter === 'unscouted') return s.matchesPlayed === 0
       return true
@@ -35,7 +40,7 @@ export default function TeamList() {
       const bv = b.metrics[sortBy]?.mean ?? 0
       return metric?.higherIsBetter === false ? av - bv : bv - av
     })
-  }, [summaries, sortBy, query, filter, game.keyMetrics])
+  }, [summaries, sortBy, query, filter, game.keyMetrics, event])
 
   if (!eventKey) {
     return <div className="p-4"><Empty title="No event selected" hint="Choose an event in Settings to start." /></div>
@@ -56,7 +61,7 @@ export default function TeamList() {
     <div className="mx-auto max-w-7xl space-y-4 p-4">
       {/* ------------------------------------------------- coverage header */}
       <div className="flex flex-wrap items-center gap-3">
-        <input className="input max-w-[200px]" placeholder="Filter by team…"
+        <input className="input max-w-[220px]" placeholder="Filter by number or name…"
           value={query} onChange={(e) => setQuery(e.target.value)} />
 
         <div className="flex gap-1 rounded-lg border border-white/10 bg-surface-1/60 p-1">
@@ -117,9 +122,15 @@ export default function TeamList() {
                   className={clsx('border-b border-white/5 transition hover:bg-white/5',
                     !hasData && 'opacity-45')}>
                   <td className="px-3 py-2">
-                    <Link to={`/analysis/${s.teamNumber}`}
-                      className="font-mono font-bold text-peninsula-300 hover:text-peninsula-200">
-                      {s.teamNumber}
+                    <Link to={`/analysis/${s.teamNumber}`} className="group block">
+                      <span className="font-mono font-bold text-peninsula-300 group-hover:text-peninsula-200">
+                        {s.teamNumber}
+                      </span>
+                      {teamInfo(event, s.teamNumber)?.nickname && (
+                        <span className="block max-w-[180px] truncate text-[11px] text-slate-500">
+                          {teamInfo(event, s.teamNumber)!.nickname}
+                        </span>
+                      )}
                     </Link>
                   </td>
                   <td className="px-3 py-2 tabular-nums text-slate-500">

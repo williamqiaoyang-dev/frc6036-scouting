@@ -5,7 +5,7 @@ import type { CounterAction, Phase, SelectAction, ToggleAction } from '@/games/t
 import { db, saveMatch } from '@/lib/db'
 import { matchId, SCHEMA_VERSION, type ScoutEvent, type Alliance } from '@/lib/schema'
 import { loadSettings } from '@/lib/settings'
-import { getCachedEvent } from '@/lib/tba'
+import { getCachedEvent, teamInfo } from '@/lib/tba'
 import type { CachedEvent } from '@/lib/schema'
 import { Card, Field, Pill, Toast } from '@/components/ui'
 import { Counter } from './Counter'
@@ -180,7 +180,10 @@ export default function MatchScout() {
               <option value={1}>1</option><option value={2}>2</option><option value={3}>3</option>
             </select>
           </Field>
-          <Field label="Team" hint={scheduled ? 'from schedule' : undefined}>
+          <Field label="Team"
+            hint={teamNumber !== '' && teamInfo(event, Number(teamNumber))?.nickname
+              ? teamInfo(event, Number(teamNumber))!.nickname
+              : scheduled ? 'from schedule' : undefined}>
             <input type="number" className="input font-bold tabular-nums" value={teamNumber}
               placeholder="6036"
               onChange={(e) => setTeamNumber(e.target.value === '' ? '' : Number(e.target.value))} />

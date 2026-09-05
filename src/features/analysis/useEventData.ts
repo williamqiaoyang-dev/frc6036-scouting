@@ -33,6 +33,7 @@ export function useEventData() {
 
   return {
     game,
+    event: data?.event ?? null,
     eventKey: settings.eventKey,
     eventName: data?.event?.name ?? '',
     loading: !data,

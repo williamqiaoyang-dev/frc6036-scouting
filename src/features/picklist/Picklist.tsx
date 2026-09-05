@@ -5,6 +5,7 @@ import type { PicklistEntry } from '@/lib/schema'
 import { percentile } from '@/lib/stats'
 import { loadSettings } from '@/lib/settings'
 import { Card, Empty, SectionTitle, percentileColor } from '@/components/ui'
+import { teamInfo } from '@/lib/tba'
 import { useEventData } from '../analysis/useEventData'
 
 const TIERS = ['First pick', 'Second pick', 'Role player', 'Defense', 'Do not pick']
@@ -24,7 +25,7 @@ const TIER_STYLES: Record<string, string> = {
  */
 export default function PicklistView() {
   const settings = loadSettings()
-  const { game, summaries, loading } = useEventData()
+  const { game, event, summaries, loading } = useEventData()
   const [entries, setEntries] = useState<PicklistEntry[]>([])
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const listId = `${settings.eventKey}_main`
@@ -100,8 +101,13 @@ export default function PicklistView() {
                   <div className="w-7 shrink-0 pt-1 text-center font-mono text-sm font-bold text-slate-600">
                     {i + 1}
                   </div>
-                  <div className="w-16 shrink-0 pt-0.5 font-mono text-lg font-bold text-peninsula-300">
-                    {entry.teamNumber}
+                  <div className="w-32 shrink-0 pt-0.5">
+                    <div className="font-mono text-lg font-bold text-peninsula-300">{entry.teamNumber}</div>
+                    {teamInfo(event, entry.teamNumber)?.nickname && (
+                      <div className="truncate text-[11px] text-slate-500">
+                        {teamInfo(event, entry.teamNumber)!.nickname}
+                      </div>
+                    )}
                   </div>
 
                   <div className="hidden shrink-0 gap-3 pt-1 sm:flex">
@@ -169,9 +175,14 @@ export default function PicklistView() {
                 <button key={s.teamNumber} type="button" onClick={() => add(s.teamNumber)}
                   className={clsx('flex w-full items-center gap-3 p-2.5 text-left transition hover:bg-white/5',
                     !hasData && 'opacity-50')}>
-                  <span className="w-14 font-mono text-sm font-bold text-slate-300">{s.teamNumber}</span>
-                  <span className="flex-1 text-xs text-slate-600">
-                    {hasData ? `${s.matchesPlayed} matches` : 'no data'}
+                  <span className="w-14 shrink-0 font-mono text-sm font-bold text-slate-300">{s.teamNumber}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs text-slate-400">
+                      {teamInfo(event, s.teamNumber)?.nickname ?? ''}
+                    </span>
+                    <span className="block text-[10px] text-slate-600">
+                      {hasData ? `${s.matchesPlayed} matches` : 'no data'}
+                    </span>
                   </span>
                   {hasData ? (
                     <span className={clsx('text-sm font-bold tabular-nums',

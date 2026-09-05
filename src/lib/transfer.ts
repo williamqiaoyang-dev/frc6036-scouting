@@ -1,7 +1,7 @@
 import { db } from './db'
 import { scoreBreakdown, actionTotals } from './stats'
 import type { GameConfig } from '@/games/types'
-import type { MatchRecord, PitRecord, SuperRecord } from './schema'
+import type { MarkerRecord, MatchRecord, PitRecord, SuperRecord } from './schema'
 
 /**
  * Getting data off a scouting device.
@@ -23,6 +23,7 @@ export interface TransferBundle {
   matches: MatchRecord[]
   pits: PitRecord[]
   supers: SuperRecord[]
+  markers: MarkerRecord[]
 }
 
 export async function buildBundle(
@@ -33,10 +34,11 @@ export async function buildBundle(
   const filter = <T extends { synced: boolean }>(rows: T[]) =>
     opts.onlyUnsynced ? rows.filter((r) => !r.synced) : rows
 
-  const [matches, pits, supers] = await Promise.all([
+  const [matches, pits, supers, markers] = await Promise.all([
     db.matches.where('eventKey').equals(eventKey).toArray(),
     db.pits.where('eventKey').equals(eventKey).toArray(),
     db.supers.where('eventKey').equals(eventKey).toArray(),
+    db.markers.where('eventKey').equals(eventKey).toArray(),
   ])
 
   return {
@@ -49,6 +51,7 @@ export async function buildBundle(
     matches: filter(matches),
     pits: filter(pits),
     supers: filter(supers),
+    markers: filter(markers),
   }
 }
 
@@ -67,10 +70,11 @@ export function parseBundle(text: string): TransferBundle {
 
 /** Mark everything currently in the bundle as transferred. */
 export async function markSynced(bundle: TransferBundle) {
-  await db.transaction('rw', db.matches, db.pits, db.supers, async () => {
+  await db.transaction('rw', db.matches, db.pits, db.supers, db.markers, async () => {
     for (const m of bundle.matches) await db.matches.update(m.id, { synced: true })
     for (const p of bundle.pits) await db.pits.update(p.id, { synced: true })
     for (const s of bundle.supers) await db.supers.update(s.id, { synced: true })
+    for (const k of bundle.markers ?? []) await db.markers.update(k.id, { synced: true })
   })
 }
 
@@ -139,6 +143,7 @@ export function expandBundle(compact: string): TransferBundle {
     })),
     pits: c.p ?? [],
     supers: c.s ?? [],
+    markers: c.k ?? [],
   }
 }
 

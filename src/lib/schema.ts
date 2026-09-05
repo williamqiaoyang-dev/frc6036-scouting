@@ -107,6 +107,8 @@ export interface CachedEvent {
   matches: CachedMatch[]
   /** Official standings, empty before qualification play begins. */
   rankings: CachedRanking[]
+  /** Identity and robot photos, keyed by team number. */
+  teamInfo: CachedTeam[]
   fetchedAt: number
 }
 
@@ -133,6 +135,56 @@ export interface CachedMatch {
   blueRp: number | null
 }
 
+/** Team identity and robot photo, from TBA. */
+export interface CachedTeam {
+  teamNumber: number
+  /** The name people actually use, e.g. "The Wildhats". */
+  nickname: string
+  /** Sponsor string. Long and rarely useful, but kept for the team page. */
+  name: string
+  city: string
+  stateProv: string
+  country: string
+  rookieYear: number | null
+  schoolName: string
+  /** Direct image URL for the robot, when a photo has been posted. */
+  robotPhotoUrl: string | null
+  /** TBA avatar, stored as a base64 PNG. */
+  avatarBase64: string | null
+}
+
+/** A timestamped note pinned to a point in a match video. */
+export interface MarkerRecord {
+  id: string
+  schemaVersion: number
+  eventKey: string
+  /** TBA match key this marker belongs to. */
+  matchKey: string
+  matchNumber: number
+  matchLevel: 'qm' | 'sf' | 'f' | 'pr'
+  /** Seconds into the video. */
+  t: number
+  /** Which robot this is about, if it is about one. */
+  teamNumber: number | null
+  /** Preset category, see MARKER_TAGS. */
+  tag: string
+  note: string
+  author: string
+  createdAt: number
+  updatedAt: number
+  synced: boolean
+}
+
+/** Preset marker categories. Free-text goes in `note`. */
+export const MARKER_TAGS = [
+  { id: 'good', label: 'Good play', accent: 'emerald' },
+  { id: 'cycle', label: 'Fast cycle', accent: 'sky' },
+  { id: 'defense', label: 'Defense', accent: 'violet' },
+  { id: 'breakdown', label: 'Breakdown', accent: 'rose' },
+  { id: 'penalty', label: 'Penalty', accent: 'amber' },
+  { id: 'note', label: 'Note', accent: 'slate' },
+] as const
+
 /** A team's official standing at an event, straight from TBA. */
 export interface CachedRanking {
   teamNumber: number
@@ -155,3 +207,5 @@ export const matchId = (eventKey: string, level: string, matchNumber: number, te
 export const pitId = (eventKey: string, team: number) => `${eventKey}_pit_${team}`
 export const superId = (eventKey: string, level: string, matchNumber: number, alliance: string) =>
   `${eventKey}_${level}${matchNumber}_${alliance}`
+export const markerId = (matchKey: string, t: number, author: string) =>
+  `${matchKey}_${Math.round(t * 10)}_${author || 'anon'}`

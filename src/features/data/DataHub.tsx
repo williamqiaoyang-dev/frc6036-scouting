@@ -22,16 +22,18 @@ export default function DataHub() {
   const [toast, setToast] = useState<{ msg: string; tone: 'green' | 'red' } | null>(null)
 
   const counts = useLiveQuery(async () => {
-    const [matches, pits, supers] = await Promise.all([
+    const [matches, pits, supers, markers] = await Promise.all([
       db.matches.where('eventKey').equals(settings.eventKey).toArray(),
       db.pits.where('eventKey').equals(settings.eventKey).toArray(),
       db.supers.where('eventKey').equals(settings.eventKey).toArray(),
+      db.markers.where('eventKey').equals(settings.eventKey).toArray(),
     ])
     return {
       matches: matches.length,
       pits: pits.length,
       supers: supers.length,
-      unsynced: [...matches, ...pits, ...supers].filter((r) => !r.synced).length,
+      markers: markers.length,
+      unsynced: [...matches, ...pits, ...supers, ...markers].filter((r) => !r.synced).length,
     }
   }, [settings.eventKey])
 
@@ -47,7 +49,7 @@ export default function DataHub() {
   async function ingest(incoming: TransferBundle) {
     const stats = await mergeRecords(incoming)
     flash(
-      `Imported ${stats.matches} matches, ${stats.pits} pits, ${stats.supers} super sheets` +
+      `Imported ${stats.matches} matches, ${stats.pits} pits, ${stats.supers} super sheets, ${stats.markers} markers` +
       (stats.skipped ? ` · ${stats.skipped} already current` : ''),
       'green',
     )
@@ -75,10 +77,11 @@ export default function DataHub() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 p-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <StatTile label="Matches" value={counts?.matches ?? 0} />
         <StatTile label="Pit sheets" value={counts?.pits ?? 0} />
         <StatTile label="Super sheets" value={counts?.supers ?? 0} />
+        <StatTile label="Video markers" value={counts?.markers ?? 0} />
         <StatTile label="Not transferred" value={counts?.unsynced ?? 0}
           tone={(counts?.unsynced ?? 0) > 0 ? 'text-amber-300' : 'text-slate-100'} />
       </div>
@@ -104,7 +107,7 @@ export default function DataHub() {
                 className={!onlyUnsynced ? 'btn-primary' : 'btn-ghost'}>Everything</button>
               {bundle && (
                 <span className="text-xs text-slate-500">
-                  {bundle.matches.length + bundle.pits.length + bundle.supers.length} records · {(size / 1024).toFixed(1)} KB
+                  {bundle.matches.length + bundle.pits.length + bundle.supers.length + bundle.markers.length} records · {(size / 1024).toFixed(1)} KB
                 </span>
               )}
             </div>
@@ -112,7 +115,7 @@ export default function DataHub() {
 
           <Card>
             <SectionTitle right={
-              bundle && (bundle.matches.length + bundle.pits.length + bundle.supers.length) > 0 ? (
+              bundle && (bundle.matches.length + bundle.pits.length + bundle.supers.length + bundle.markers.length) > 0 ? (
                 <button type="button" onClick={async () => {
                   await markSynced(bundle); flash('Marked as transferred.', 'green')
                 }} className="text-xs text-slate-500 hover:text-slate-300">
@@ -122,7 +125,7 @@ export default function DataHub() {
             }>
               QR transfer
             </SectionTitle>
-            {bundle && (bundle.matches.length + bundle.pits.length + bundle.supers.length) > 0 ? (
+            {bundle && (bundle.matches.length + bundle.pits.length + bundle.supers.length + bundle.markers.length) > 0 ? (
               <QrExport bundle={bundle} />
             ) : (
               <Empty title="Nothing new to send" hint="Everything here has already been transferred." />

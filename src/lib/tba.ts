@@ -1,6 +1,6 @@
 import { db } from './db'
 import { getConfig } from './config'
-import type { CachedEvent, CachedMatch, CachedRanking, MatchVideo } from './schema'
+import type { CachedEvent, CachedMatch, CachedRanking, CachedTeam, MatchVideo } from './schema'
 
 /**
  * The Blue Alliance Read API v3.
@@ -54,17 +54,45 @@ const teamNum = (key: string) => parseInt(key.replace('frc', ''), 10)
  * Rankings and OPRs are best-effort: they 404 before qualification play
  * starts, which is normal and must not fail the whole sync.
  */
-export async function fetchEvent(eventKey: string): Promise<CachedEvent> {
-  const [info, teams, matches] = await Promise.all([
+export async function fetchEvent(
+  eventKey: string,
+  onProgress?: (message: string) => void,
+): Promise<CachedEvent> {
+  onProgress?.('Fetching schedule…')
+  const [info, teamList, matches] = await Promise.all([
     tbaFetch<{ name: string }>(`/event/${eventKey}/simple`),
-    tbaFetch<{ key: string }[]>(`/event/${eventKey}/teams/keys`),
+    tbaFetch<any[]>(`/event/${eventKey}/teams`),
     tbaFetch<any[]>(`/event/${eventKey}/matches`),
   ])
 
+  onProgress?.('Fetching standings…')
   const [rankingData, oprData] = await Promise.all([
     tbaFetch<any>(`/event/${eventKey}/rankings`).catch(() => null),
     tbaFetch<any>(`/event/${eventKey}/oprs`).catch(() => null),
   ])
+
+  // Robot photos are one request per team, so they run pooled and are
+  // strictly best-effort: a team with no photo posted must not fail the sync.
+  const year = Number(eventKey.slice(0, 4)) || new Date().getFullYear()
+  onProgress?.(`Fetching robot photos (0/${teamList.length})…`)
+  let done = 0
+  const teamInfo: CachedTeam[] = await pool(teamList, 6, async (t: any) => {
+    const media = await tbaFetch<any[]>(`/team/${t.key}/media/${year}`).catch(() => [])
+    onProgress?.(`Fetching robot photos (${++done}/${teamList.length})…`)
+    return {
+      teamNumber: t.team_number,
+      nickname: t.nickname ?? `Team ${t.team_number}`,
+      name: t.name ?? '',
+      city: t.city ?? '',
+      stateProv: t.state_prov ?? '',
+      country: t.country ?? '',
+      rookieYear: t.rookie_year ?? null,
+      schoolName: t.school_name ?? '',
+      robotPhotoUrl: pickRobotPhoto(media),
+      avatarBase64: media.find((m) => m.type === 'avatar')?.details?.base64Image ?? null,
+    }
+  })
+  teamInfo.sort((a, b) => a.teamNumber - b.teamNumber)
 
   const oprs: Record<string, number> = oprData?.oprs ?? {}
 
@@ -82,7 +110,7 @@ export async function fetchEvent(eventKey: string): Promise<CachedEvent> {
   const cached: CachedEvent = {
     eventKey,
     name: info.name,
-    teams: teams.map((t: any) => teamNum(typeof t === 'string' ? t : t.key)).sort((a, b) => a - b),
+    teams: teamList.map((t: any) => t.team_number).sort((a: number, b: number) => a - b),
     matches: matches
       .filter((m) => LEVEL_MAP[m.comp_level])
       .map((m): CachedMatch => ({
@@ -105,11 +133,51 @@ export async function fetchEvent(eventKey: string): Promise<CachedEvent> {
           ? a.matchNumber - b.matchNumber
           : ['qm', 'sf', 'f'].indexOf(a.matchLevel) - ['qm', 'sf', 'f'].indexOf(b.matchLevel)),
     rankings,
+    teamInfo,
     fetchedAt: Date.now(),
   }
 
   await db.events.put(cached)
   return cached
+}
+
+/**
+ * Pick the best robot photo from a team's media.
+ * Prefers whatever the team marked `preferred`, then any real image host.
+ * Ignores video thumbnails, which are not pictures of the robot.
+ */
+function pickRobotPhoto(media: any[]): string | null {
+  const images = media.filter(
+    (m) => m?.direct_url && ['imgur', 'cdphotothread', 'instagram-image', 'onshape'].includes(m.type),
+  )
+  const preferred = images.find((m) => m.preferred)
+  return (preferred ?? images[0])?.direct_url ?? null
+}
+
+/** Run an async mapper over items with bounded concurrency. */
+async function pool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length)
+  let next = 0
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++
+        out[i] = await fn(items[i])
+      }
+    }),
+  )
+  return out
+}
+
+/** Identity and robot photo for one team. */
+export function teamInfo(event: CachedEvent | null, team: number): CachedTeam | null {
+  return event?.teamInfo?.find((t) => t.teamNumber === team) ?? null
+}
+
+/** Display name: "1323 — Madtown Robotics", falling back to the number. */
+export function teamDisplayName(event: CachedEvent | null, team: number): string {
+  const info = teamInfo(event, team)
+  return info?.nickname ? `${team} — ${info.nickname}` : String(team)
 }
 
 /** Every cached match a team appears in, newest first. */

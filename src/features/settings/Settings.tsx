@@ -17,6 +17,7 @@ export default function Settings() {
   const [cached, setCached] = useState<CachedEvent[]>([])
   const [teamEvents, setTeamEvents] = useState<{ key: string; name: string; start: string }[]>([])
   const [busy, setBusy] = useState('')
+  const [progress, setProgress] = useState('')
   const [toast, setToast] = useState<{ msg: string; tone: 'green' | 'red' } | null>(null)
 
   useEffect(() => { listCachedEvents().then(setCached) }, [busy])
@@ -42,13 +43,19 @@ export default function Settings() {
   async function syncEvent(eventKey: string) {
     if (!eventKey) return
     setBusy(eventKey)
+    setProgress('Starting…')
     try {
-      const event = await fetchEvent(eventKey)
+      const event = await fetchEvent(eventKey, setProgress)
       set('eventKey', eventKey)
-      flash(`Cached ${event.name}: ${event.teams.length} teams, ${event.matches.length} matches.`, 'green')
+      const photos = event.teamInfo.filter((t) => t.robotPhotoUrl).length
+      flash(
+        `Cached ${event.name}: ${event.teams.length} teams, ${event.matches.length} matches, ` +
+        `${event.matches.filter((m) => m.videos.length).length} videos, ${photos} robot photos.`,
+        'green',
+      )
     } catch (e) {
       flash(e instanceof Error ? e.message : 'Fetch failed', 'red')
-    } finally { setBusy('') }
+    } finally { setBusy(''); setProgress('') }
   }
 
   async function wipe() {
@@ -137,6 +144,12 @@ export default function Settings() {
             </button>
           </div>
         </Field>
+
+        {progress && (
+          <p className="mt-2 text-xs text-peninsula-300">
+            {progress} <span className="text-slate-600">— robot photos are one request per team, so this takes a moment.</span>
+          </p>
+        )}
 
         {cached.length > 0 && (
           <div className="mt-4">
