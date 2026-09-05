@@ -200,6 +200,7 @@ export interface MarkerRecord {
 /** Preset marker categories. Free-text goes in `note`. */
 export const MARKER_TAGS = [
   { id: 'good', label: 'Good play', accent: 'emerald' },
+  { id: 'shot', label: 'Shot scored', accent: 'lime' },
   { id: 'cycle', label: 'Fast cycle', accent: 'sky' },
   { id: 'defense', label: 'Defense', accent: 'violet' },
   { id: 'breakdown', label: 'Breakdown', accent: 'rose' },

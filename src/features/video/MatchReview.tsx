@@ -11,6 +11,7 @@ import { Card, Empty, Pill, SectionTitle } from '@/components/ui'
 import { MatchVideo } from './MatchVideo'
 import { VideoPlayer, type PlayerHandle } from './VideoPlayer'
 import { MarkerPanel } from './MarkerPanel'
+import { FilmAnalyzer } from './FilmAnalyzer'
 
 /**
  * Match review: TBA footage beside what the scouts actually recorded.
@@ -81,6 +82,14 @@ export default function MatchReview() {
 
   const videoCount = event.matches.filter((m) => m.videos.length > 0).length
 
+  // What our scouts logged per robot, so film review can be checked against
+  // it rather than replacing it.
+  const scoutedFuel: Record<number, number> = {}
+  for (const rec of records) {
+    const t = actionTotals(rec)
+    scoutedFuel[rec.teamNumber] = (t.auto_fuel_scored ?? 0) + (t.teleop_fuel_scored ?? 0)
+  }
+
   return (
     <div className="mx-auto grid max-w-[1600px] gap-4 p-4 lg:grid-cols-[280px_1fr]">
       {/* ------------------------------------------------------ match picker */}
@@ -141,6 +150,14 @@ export default function MatchReview() {
           ) : (
             <MatchVideo match={selected} label={matchLabel(selected)} />
           )}
+
+          <FilmAnalyzer
+            match={selected}
+            eventKey={settings.eventKey}
+            author={settings.scoutName || 'anonymous'}
+            scoutedFuel={scoutedFuel}
+            onMarkersChanged={() => setMarkerBump((n) => n + 1)}
+          />
 
           {/* Official score from TBA */}
           <Card>

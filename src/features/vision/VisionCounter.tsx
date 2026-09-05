@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { VisionMode } from '@/lib/ballTracker'
-import { DEFAULT_VISION, type VisionConfig } from '@/lib/vision'
+import type { VisionConfig } from '@/lib/vision'
 import { Panel } from '@/components/ui'
 import { useBallVision } from './useBallVision'
+import { VisionTuning } from './VisionTuning'
+import { drawVisionOverlay } from './overlay'
 import { Trim } from '@/features/match/Counter'
 
 type Tool = 'none' | 'zone' | 'sample' | 'floor'
@@ -39,10 +41,11 @@ export function VisionCounter({
   const [tool, setTool] = useState<Tool>('none')
   const [draft, setDraft] = useState<{ x: number; y: number }[]>([])
   const [lastHit, setLastHit] = useState(0)
+  const [missedSec, setMissedSec] = useState(0)
 
   const active = mode !== 'manual'
 
-  const { detections, fps, sampleAt, reset } = useBallVision({
+  const { detections, fps, sampleAt, reset, procWidth } = useBallVision({
     video, mode, config, enabled: streaming && active,
     onScore: () => { setLastHit(Date.now()); onScore() },
   })
@@ -76,58 +79,34 @@ export function VisionCounter({
     }
   }, [active])
 
+  // A backgrounded tab is presented no frames, so the camera counts nothing
+  // while the scout is looking at something else. Losing counts silently
+  // would be worse than losing them, so say how long was missed.
+  useEffect(() => {
+    if (!active || !streaming) return
+    let hiddenAt = 0
+    const onChange = () => {
+      if (document.hidden) hiddenAt = Date.now()
+      else if (hiddenAt) {
+        const gap = (Date.now() - hiddenAt) / 1000
+        if (gap > 1.5) setMissedSec(Math.round(gap))
+        hiddenAt = 0
+      }
+    }
+    document.addEventListener('visibilitychange', onChange)
+    return () => document.removeEventListener('visibilitychange', onChange)
+  }, [active, streaming])
+
   // ---- overlay -----------------------------------------------------------
   useEffect(() => {
     const canvas = overlayRef.current
     const v = videoRef.current
-    if (!canvas || !v) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    const w = canvas.width = canvas.clientWidth
-    const h = canvas.height = canvas.clientHeight
-    ctx.clearRect(0, 0, w, h)
-
-    // Floor line: everything below is ignored.
-    ctx.strokeStyle = 'rgba(255,196,0,.55)'
-    ctx.setLineDash([6, 5])
-    ctx.lineWidth = 1.5
-    ctx.beginPath()
-    ctx.moveTo(0, config.groundY * h)
-    ctx.lineTo(w, config.groundY * h)
-    ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = 'rgba(255,196,0,.75)'
-    ctx.font = '11px Barlow, sans-serif'
-    ctx.fillText('floor — ignored below', 6, config.groundY * h + 13)
-
-    const poly = draft.length ? draft : config.zone
-    if (poly.length >= 2) {
-      ctx.beginPath()
-      poly.forEach((p, i) => (i ? ctx.lineTo(p.x * w, p.y * h) : ctx.moveTo(p.x * w, p.y * h)))
-      if (!draft.length) ctx.closePath()
-      ctx.strokeStyle = draft.length ? '#FFC400' : '#3B8CFF'
-      ctx.lineWidth = 2
-      ctx.stroke()
-      if (!draft.length) { ctx.fillStyle = 'rgba(59,140,255,.14)'; ctx.fill() }
-    }
-    poly.forEach((p) => {
-      ctx.beginPath()
-      ctx.arc(p.x * w, p.y * h, 4, 0, Math.PI * 2)
-      ctx.fillStyle = draft.length ? '#FFC400' : '#3B8CFF'
-      ctx.fill()
+    if (!canvas || !v || !v.videoWidth) return
+    drawVisionOverlay(canvas, {
+      config, draft, detections,
+      procWidth,
+      procHeight: Math.round(procWidth * (v.videoHeight / v.videoWidth)),
     })
-
-    // Detections, scaled from the processing canvas to display size.
-    const sx = w / 320
-    const sy = h / (320 * (v.videoHeight / Math.max(1, v.videoWidth)))
-    for (const d of detections) {
-      ctx.beginPath()
-      ctx.arc(d.x * sx, d.y * sy, Math.max(5, d.radius * sx), 0, Math.PI * 2)
-      ctx.strokeStyle = '#34d399'
-      ctx.lineWidth = 2
-      ctx.stroke()
-    }
   }, [detections, config.zone, config.groundY, draft])
 
   function toNorm(e: React.MouseEvent<HTMLCanvasElement>) {
@@ -268,9 +247,19 @@ export function VisionCounter({
               that is what keeps balls on the floor out of the count.
             </p>
           )}
+          {missedSec > 0 && (
+            <p className="mt-2 flex items-center gap-2 text-[12px] leading-snug text-signal">
+              <span>
+                This tab was in the background for {missedSec}s — the camera counted
+                nothing during that time. Add what you saw by hand.
+              </span>
+              <button type="button" onClick={() => setMissedSec(0)}
+                className="shrink-0 underline">dismiss</button>
+            </p>
+          )}
           {error && <p className="mt-2 text-[12px] text-alliance-red">{error}</p>}
 
-          <Tuning config={config} onChange={onConfigChange} />
+          <VisionTuning config={config} onChange={onConfigChange} />
         </>
       )}
 
@@ -281,65 +270,5 @@ export function VisionCounter({
         </p>
       )}
     </Panel>
-  )
-}
-
-/** Every threshold is adjustable, because venue lighting never cooperates. */
-function Tuning({
-  config, onChange,
-}: { config: VisionConfig; onChange: (c: VisionConfig) => void }) {
-  const [open, setOpen] = useState(false)
-  const swatch = useMemo(() => `hsl(${config.hue} 85% 55%)`, [config.hue])
-
-  const rows: [string, keyof VisionConfig, number, number, number, string][] = [
-    ['Ball colour', 'hue', 0, 360, 1, 'Sampled from a real ball, or set by hand.'],
-    ['Colour tolerance', 'hueTolerance', 3, 60, 1, 'Wider catches more, but risks false hits.'],
-    ['Min brightness', 'minValue', 0, 1, 0.01, 'Raise it to reject shadows.'],
-    ['Min saturation', 'minSaturation', 0, 1, 0.01, 'Raise it to reject grey and white.'],
-    ['Min ball size (px)', 'minRadius', 2, 40, 1, 'At 320px processing width.'],
-    ['Max ball size (px)', 'maxRadius', 5, 120, 1, ''],
-    ['Roundness', 'minCircularity', 0.2, 1, 0.01, 'Higher rejects arms, bumpers and streaks.'],
-    ['Repeat guard (ms)', 'cooldownMs', 60, 1200, 10, 'Minimum gap between two counts.'],
-    ['Travel to score (px)', 'minTravelPx', 0, 120, 1, 'Dynamic mode: how far a shot must move.'],
-  ]
-
-  return (
-    <div className="mt-3 border-t border-deck-600 pt-2">
-      <button type="button" onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between text-left">
-        <span className="font-display text-[15px] font-600 text-chalk-dim">
-          Tuning
-        </span>
-        <span className="flex items-center gap-2 text-[12px] text-chalk-faint">
-          <span className="inline-block h-3 w-3 rounded-full border border-deck-500"
-            style={{ background: swatch }} />
-          {open ? 'hide' : 'show'}
-        </span>
-      </button>
-
-      {open && (
-        <div className="mt-2 grid gap-2.5 sm:grid-cols-2">
-          {rows.map(([label, key, min, max, step, hint]) => (
-            <label key={key} className="block">
-              <span className="flex items-baseline justify-between">
-                <span className="label">{label}</span>
-                <span className="text-[12px] text-chalk-dim">
-                  {typeof config[key] === 'number' ? (config[key] as number) : ''}
-                </span>
-              </span>
-              <input type="range" min={min} max={max} step={step}
-                value={config[key] as number}
-                onChange={(e) => onChange({ ...config, [key]: Number(e.target.value) })}
-                className="mt-1 w-full accent-signal" />
-              {hint && <span className="text-[11px] leading-tight text-chalk-faint">{hint}</span>}
-            </label>
-          ))}
-          <div className="sm:col-span-2">
-            <button type="button" onClick={() => onChange({ ...DEFAULT_VISION, zone: config.zone })}
-              className="btn-ghost h-8 py-0 text-[13px]">Reset tuning to defaults</button>
-          </div>
-        </div>
-      )}
-    </div>
   )
 }

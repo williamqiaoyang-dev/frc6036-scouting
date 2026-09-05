@@ -181,6 +181,7 @@ export function VideoPlayer({
 
 export const MARKER_COLORS: Record<string, string> = {
   good: 'bg-emerald-400',
+  shot: 'bg-lime-300',
   cycle: 'bg-alliance-blue',
   defense: 'bg-violet-400',
   breakdown: 'bg-alliance-red',
