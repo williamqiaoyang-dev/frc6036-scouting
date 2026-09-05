@@ -63,6 +63,8 @@ export function FilmAnalyzer({
   const fileRef = useRef<HTMLInputElement>(null)
   const scanRef = useRef(false)
   const hitKey = useRef(1)
+  /** The video tab this page opened, so it can be focused again later. */
+  const videoTab = useRef<Window | null>(null)
 
   const [source, setSource] = useState<Source>({ kind: 'none' })
   const [video, setVideo] = useState<HTMLVideoElement | null>(null)
@@ -74,6 +76,9 @@ export function FilmAnalyzer({
   const [team, setTeam] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(0)
+  const [tabOpened, setTabOpened] = useState(false)
+  const [cameBack, setCameBack] = useState(false)
+  const [surfaceNote, setSurfaceNote] = useState('')
 
   const [drawing, setDrawing] = useState<string | null>(null)
   const [sampling, setSampling] = useState<string | null>(null)
@@ -132,19 +137,68 @@ export function FilmAnalyzer({
     setSource({ kind: 'url', url: url.trim() })
   }
 
+  /**
+   * Open the match on YouTube in its own tab.
+   *
+   * The share picker only lists tabs that already exist, so telling someone
+   * to "share the tab playing the match" is useless until that tab is open.
+   * This opens it, under a name tied to the match so clicking again returns
+   * to the same tab instead of piling up duplicates.
+   */
+  function openVideoTab() {
+    if (!youtube) return
+    setError('')
+    const win = window.open(videoWatchUrl(youtube), `film-${match.key}`)
+    if (!win) {
+      setError('The browser blocked that pop-up. Allow pop-ups for this site, or open the match on YouTube yourself in another tab.')
+      return
+    }
+    videoTab.current = win
+    setTabOpened(true)
+    setCameBack(false)
+  }
+
+  function focusVideoTab() {
+    if (videoTab.current && !videoTab.current.closed) videoTab.current.focus()
+    else openVideoTab()
+  }
+
+  // Coming back from the video tab is the cue that step 2 is ready.
+  useEffect(() => {
+    if (!tabOpened) return
+    const onVisible = () => { if (!document.hidden) setCameBack(true) }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [tabOpened])
+
   async function shareTab() {
     releaseSource()
-    setHits([]); setError(''); setSaved(0)
+    setHits([]); setError(''); setSaved(0); setSurfaceNote('')
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 30 }, audio: false,
-      })
-      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        // Ask for a tab specifically: Chrome opens the picker on the tab
+        // list rather than the whole-screen one, and excludes this page so
+        // nobody accidentally points the camera at itself.
+        video: { frameRate: 30, displaySurface: 'browser' },
+        audio: false,
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'include',
+        systemAudio: 'exclude',
+      } as MediaStreamConstraints)
+
+      const track = stream.getVideoTracks()[0]
+      track?.addEventListener('ended', () => {
         setSource({ kind: 'none' }); setRunning(false)
       })
+
+      const surface = (track?.getSettings() as { displaySurface?: string })?.displaySurface
+      if (surface && surface !== 'browser') {
+        setSurfaceNote('You shared a whole window or screen. That works, but sharing the single tab is sharper and smoother.')
+      }
+
       setSource({ kind: 'screen', stream })
     } catch {
-      setError('Nothing was shared. Pick the tab playing the match and allow sharing.')
+      setError('Nothing was shared. Choose the tab playing the match, then Share.')
     }
   }
 
@@ -380,12 +434,12 @@ export function FilmAnalyzer({
               : 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk')}>
           Share a tab
         </button>
-        {youtube && (
-          <a href={videoWatchUrl(youtube)} target="_blank" rel="noreferrer"
-            className="h-8 rounded-panel border border-deck-500 px-3 text-[13px] font-600
-                       leading-8 text-chalk-dim transition hover:bg-deck-600 hover:text-chalk">
-            Open this match on YouTube ↗
-          </a>
+        {source.kind === 'screen' && youtube && (
+          <button type="button" onClick={focusVideoTab}
+            className="h-8 rounded-panel border border-signal/50 px-3 text-[13px] font-600
+                       text-signal transition hover:bg-signal/10">
+            Back to the video ↗
+          </button>
         )}
         {live && (
           <button type="button" onClick={releaseSource}
@@ -394,6 +448,10 @@ export function FilmAnalyzer({
           </button>
         )}
       </div>
+
+      {surfaceNote && (
+        <p className="mb-2 text-[12px] leading-snug text-signal">{surfaceNote}</p>
+      )}
 
       {!live && (
         <div className="rounded-panel border border-deck-600 bg-deck-900 p-3">
@@ -412,11 +470,47 @@ export function FilmAnalyzer({
               <span className="font-600 text-chalk">Video URL</span> — a direct link to an
               .mp4 or .webm your team hosts. The host must allow other sites to read it.
             </li>
-            <li>
-              <span className="font-600 text-chalk">Share a tab</span> — open this match on
-              YouTube, come back, share that tab, and play it there. Live only.
-            </li>
           </ul>
+
+          {youtube && (
+            <div className="mt-3 border-t border-deck-600 pt-3">
+              <div className="label mb-2">Or read this match's TBA footage</div>
+              <ol className="space-y-2">
+                <li className="flex items-center gap-2">
+                  <Step n={1} done={tabOpened} />
+                  <button type="button" onClick={openVideoTab}
+                    className={clsx('h-8 rounded-panel border px-3 text-[13px] font-600 transition',
+                      tabOpened
+                        ? 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk'
+                        : 'border-signal bg-signal/15 text-signal hover:bg-signal/25')}>
+                    {tabOpened ? 'Reopen the match on YouTube ↗' : 'Open the match on YouTube ↗'}
+                  </button>
+                  <span className="text-[12px] text-chalk-faint">
+                    the share picker can only offer tabs that are already open
+                  </span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Step n={2} done={false} />
+                  <button type="button" onClick={shareTab}
+                    className={clsx('h-8 rounded-panel border px-3 text-[13px] font-600 transition',
+                      cameBack
+                        ? 'border-signal bg-signal/15 text-signal hover:bg-signal/25'
+                        : 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk')}>
+                    Share that tab
+                  </button>
+                  <span className="text-[12px] text-chalk-faint">
+                    pick the YouTube tab in the picker Chrome shows
+                  </span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Step n={3} done={false} />
+                  <span className="text-[13px] text-chalk-dim">
+                    Play it over there. Counting keeps running while you watch.
+                  </span>
+                </li>
+              </ol>
+            </div>
+          )}
         </div>
       )}
 
@@ -643,4 +737,16 @@ function seeked(v: HTMLVideoElement): Promise<void> {
     const timer = setTimeout(finish, 500)
     v.addEventListener('seeked', finish)
   })
+}
+
+/** Step number for the tab-sharing walkthrough. */
+function Step({ n, done }: { n: number; done: boolean }) {
+  return (
+    <span className={clsx(
+      'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-700',
+      done ? 'bg-emerald-400/20 text-emerald-300' : 'bg-deck-600 text-chalk-dim',
+    )}>
+      {done ? '✓' : n}
+    </span>
+  )
 }
