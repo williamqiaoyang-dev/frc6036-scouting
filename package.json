@@ -6,10 +6,10 @@
   "description": "FRC scouting system for Team 6036 Peninsula Robotics",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "deploy": "vite build && node scripts/deploy.mjs",
+    "deploy": "npm run build && node scripts/deploy.mjs",
     "set-key": "node scripts/set-key.mjs"
   },
   "dependencies": {

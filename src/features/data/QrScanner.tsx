@@ -83,14 +83,14 @@ export function QrScanner({ onBundle }: { onBundle: (b: TransferBundle) => void 
         </button>
       ) : (
         <>
-          <div className="relative overflow-hidden rounded-xl border border-white/10 bg-black">
+          <div className="relative overflow-hidden rounded-panel border border-deck-500 bg-black">
             <video ref={videoRef} playsInline muted className="w-full" />
-            <div className="pointer-events-none absolute inset-8 rounded-lg border-2 border-peninsula-400/60" />
+            <div className="pointer-events-none absolute inset-8 rounded-panel border-2 border-signal/60" />
           </div>
           <div className="flex items-center gap-3">
             <button type="button" onClick={() => setScanning(false)} className="btn-ghost">Stop</button>
             {progress.total > 0 && (
-              <span className="text-sm tabular-nums text-slate-400">
+              <span className="text-sm tabular-nums text-chalk-dim">
                 {progress.have} / {progress.total} codes captured
               </span>
             )}
@@ -98,7 +98,7 @@ export function QrScanner({ onBundle }: { onBundle: (b: TransferBundle) => void 
         </>
       )}
       <canvas ref={canvasRef} className="hidden" />
-      {error && <p className="text-sm text-rose-400">{error}</p>}
+      {error && <p className="text-sm text-alliance-red">{error}</p>}
     </div>
   )
 }

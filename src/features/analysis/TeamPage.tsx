@@ -55,7 +55,7 @@ export default function TeamPage() {
     })
   }, [teamMatches, game])
 
-  if (loading) return <div className="p-8 text-center text-slate-600">Loading…</div>
+  if (loading) return <div className="p-8 text-center text-chalk-faint">Loading…</div>
   if (!summary) {
     return (
       <div className="p-4">
@@ -81,7 +81,7 @@ export default function TeamPage() {
 
   const videoSection = videos.length > 0 && (
     <Card>
-      <SectionTitle right={<span className="text-[11px] text-slate-600">from The Blue Alliance</span>}>
+      <SectionTitle right={<span className="text-[11px] text-chalk-faint">from The Blue Alliance</span>}>
         Match footage
       </SectionTitle>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -90,7 +90,7 @@ export default function TeamPage() {
         ))}
       </div>
       {videos.length > 6 && (
-        <p className="mt-2 text-xs text-slate-600">
+        <p className="mt-2 text-xs text-chalk-faint">
           Showing 6 of {videos.length}. The Review tab has the full list.
         </p>
       )}
@@ -102,7 +102,7 @@ export default function TeamPage() {
   // still show everything that *is* known: standings, footage, pit sheet.
   if (summary.matchesPlayed === 0) {
     return (
-      <div className="mx-auto max-w-7xl space-y-4 p-4">
+      <div className="mx-auto max-w-[1600px] space-y-4 p-4">
         <TeamIdentity event={event} team={team}
           extraPills={<><Pill tone="amber">Not scouted</Pill>{headerPills}</>} />
 
@@ -139,7 +139,7 @@ export default function TeamPage() {
   const hasSuperData = radarData.some((d) => d.value > 0)
 
   return (
-    <div className="mx-auto max-w-7xl space-y-4 p-4">
+    <div className="mx-auto max-w-[1600px] space-y-4 p-4">
       <TeamIdentity event={event} team={team}
         extraPills={<>
           <Pill>{summary.matchesPlayed} scouted</Pill>
@@ -184,7 +184,7 @@ export default function TeamPage() {
 
         {/* ------------------------------------------------ shift profile */}
         <Card>
-          <SectionTitle right={<span className="text-[11px] text-slate-600">avg per match</span>}>
+          <SectionTitle right={<span className="text-[11px] text-chalk-faint">avg per match</span>}>
             FUEL by match window
           </SectionTitle>
           <ResponsiveContainer width="100%" height={240}>
@@ -202,7 +202,7 @@ export default function TeamPage() {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
-          <p className="mt-2 text-[11px] leading-relaxed text-slate-600">
+          <p className="mt-2 text-[11px] leading-relaxed text-chalk-faint">
             Flat bars across shifts mean the robot cycles regardless of HUB state.
             Big swings suggest it only produces when its own HUB is active.
           </p>
@@ -214,12 +214,12 @@ export default function TeamPage() {
           <div className="space-y-2">
             {climbRows(summary).map((row) => (
               <div key={row.label} className="flex items-center gap-3">
-                <span className="w-28 text-xs font-semibold text-slate-400">{row.label}</span>
-                <div className="h-6 flex-1 overflow-hidden rounded bg-black/30">
+                <span className="w-28 text-xs font-semibold text-chalk-dim">{row.label}</span>
+                <div className="h-6 flex-1 overflow-hidden rounded bg-deck-900">
                   <div className={clsx('h-full transition-all', row.color)}
                     style={{ width: `${row.pct}%` }} />
                 </div>
-                <span className="w-16 text-right text-xs tabular-nums text-slate-500">
+                <span className="w-16 text-right text-xs tabular-nums text-chalk-dim">
                   {row.count}× · {Math.round(row.pct)}%
                 </span>
               </div>
@@ -263,9 +263,9 @@ export default function TeamPage() {
           <SectionTitle>Scout notes</SectionTitle>
           <div className="space-y-2">
             {summary.notes.map((n, i) => (
-              <div key={i} className="flex gap-3 border-b border-white/5 pb-2 text-sm">
-                <span className="shrink-0 font-mono text-xs text-slate-600">M{n.matchNumber}</span>
-                <span className="text-slate-300">{n.text}</span>
+              <div key={i} className="flex gap-3 border-b border-deck-600 pb-2 text-sm">
+                <span className="shrink-0 font-mono text-xs text-chalk-faint">M{n.matchNumber}</span>
+                <span className="text-chalk">{n.text}</span>
               </div>
             ))}
           </div>
@@ -284,9 +284,9 @@ function PitSheet({ game, pit, team }: { game: any; pit: any; team: number }) {
           const v = pit.fields[f.id]
           if (v === undefined || v === '' || (Array.isArray(v) && !v.length)) return null
           return (
-            <div key={f.id} className="flex justify-between gap-3 border-b border-white/5 py-1.5">
-              <span className="text-xs text-slate-500">{f.label}</span>
-              <span className="text-right text-xs font-semibold text-slate-300">
+            <div key={f.id} className="flex justify-between gap-3 border-b border-deck-600 py-1.5">
+              <span className="text-xs text-chalk-dim">{f.label}</span>
+              <span className="text-right text-xs font-semibold text-chalk">
                 {Array.isArray(v) ? v.join(', ') : typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v)}
               </span>
             </div>
@@ -297,7 +297,7 @@ function PitSheet({ game, pit, team }: { game: any; pit: any; team: number }) {
         <div className="mt-4 flex flex-wrap gap-2">
           {pit.photos.map((src: string, i: number) => (
             <img key={i} src={src} alt={`Team ${team} robot`}
-              className="h-32 rounded-lg border border-white/10 object-cover" />
+              className="h-32 rounded-panel border border-deck-500 object-cover" />
           ))}
         </div>
       )}
@@ -319,7 +319,7 @@ function climbRows(summary: ReturnType<typeof useEventData>['summaries'][number]
   const labels: Record<string, { label: string; color: string }> = {
     l3: { label: 'Level 3', color: 'bg-violet-500' },
     l2: { label: 'Level 2', color: 'bg-indigo-500' },
-    l1: { label: 'Level 1', color: 'bg-sky-500' },
+    l1: { label: 'Level 1', color: 'bg-alliance-blue' },
     none: { label: 'No climb', color: 'bg-slate-600' },
     failed: { label: 'Failed', color: 'bg-rose-500' },
   }

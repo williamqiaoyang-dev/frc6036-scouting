@@ -75,7 +75,7 @@ export default function PitScout() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 p-4 pb-28">
+    <div className="mx-auto max-w-[1200px] space-y-4 p-4 pb-28">
       <Card>
         <div className="grid gap-3 sm:grid-cols-[200px_1fr]">
           <Field label="Team number">
@@ -88,14 +88,14 @@ export default function PitScout() {
               <div className="label mb-1">
                 Teams at {event.name} — {scouted.size}/{event.teams.length} scouted
               </div>
-              <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-2">
+              <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto rounded-panel border border-deck-500 bg-deck-900 p-2">
                 {event.teams.map((t) => (
                   <button key={t} type="button" onClick={() => setTeam(t)}
                     className={clsx(
                       'rounded px-1.5 py-0.5 font-mono text-xs transition',
-                      t === team ? 'bg-peninsula-600 text-white'
+                      t === team ? 'bg-signal/15 text-white'
                         : scouted.has(t) ? 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
-                        : 'bg-white/5 text-slate-500 hover:bg-white/10',
+                        : 'bg-deck-700 text-chalk-dim hover:bg-deck-600',
                     )}
                   >
                     {t}
@@ -126,14 +126,14 @@ export default function PitScout() {
         <div className="flex flex-wrap gap-3">
           {photos.map((src, i) => (
             <div key={i} className="relative">
-              <img src={src} alt={`Robot ${i + 1}`} className="h-28 w-28 rounded-lg border border-white/10 object-cover" />
+              <img src={src} alt={`Robot ${i + 1}`} className="h-28 w-28 rounded-panel border border-deck-500 object-cover" />
               <button type="button" onClick={() => setPhotos((p) => p.filter((_, j) => j !== i))}
                 className="absolute -right-2 -top-2 h-6 w-6 rounded-full bg-rose-600 text-xs font-bold text-white">
                 ×
               </button>
             </div>
           ))}
-          <label className="flex h-28 w-28 cursor-pointer items-center justify-center rounded-lg border border-dashed border-white/20 text-3xl text-slate-600 hover:bg-white/5">
+          <label className="flex h-28 w-28 cursor-pointer items-center justify-center rounded-panel border border-dashed border-deck-500 text-3xl text-chalk-faint hover:bg-deck-600">
             +
             <input type="file" accept="image/*" capture="environment" className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) addPhoto(f); e.target.value = '' }} />
@@ -141,9 +141,9 @@ export default function PitScout() {
         </div>
       </Card>
 
-      <div className="fixed inset-x-0 bottom-0 border-t border-white/10 bg-surface-0/95 p-3 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center gap-3">
-          <div className="flex-1 text-xs text-slate-600">
+      <div className="fixed inset-x-0 bottom-0 border-t border-deck-500 bg-deck-900/95 p-3 backdrop-blur">
+        <div className="mx-auto flex max-w-[1200px] items-center gap-3">
+          <div className="flex-1 text-xs text-chalk-faint">
             {team !== '' && scouted.has(Number(team)) && 'Editing an existing sheet — saving overwrites it.'}
           </div>
           <button type="button" onClick={submit} className="btn-primary px-8">Save pit sheet</button>
@@ -168,8 +168,8 @@ function PitInput({
     case 'boolean':
       return (
         <button type="button" onClick={() => onChange(!value)}
-          className={clsx('tap-target w-full rounded-lg border px-4 py-2 text-sm font-semibold transition',
-            value ? 'border-emerald-500 bg-emerald-600 text-white' : 'border-white/10 bg-surface-0 text-slate-400')}>
+          className={clsx('tap-target w-full rounded-panel border px-4 py-2 text-sm font-semibold transition',
+            value ? 'border-emerald-500 bg-emerald-600 text-white' : 'border-deck-500 bg-deck-900 text-chalk-dim')}>
           {value ? 'Yes' : 'No'}
         </button>
       )
@@ -189,9 +189,9 @@ function PitInput({
             return (
               <button key={o} type="button"
                 onClick={() => onChange(on ? selected.filter((x) => x !== o) : [...selected, o])}
-                className={clsx('tap-target rounded-lg border px-3 py-1.5 text-xs font-semibold transition',
-                  on ? 'border-peninsula-400 bg-peninsula-600 text-white'
-                     : 'border-white/10 bg-surface-0 text-slate-400 hover:bg-white/5')}>
+                className={clsx('tap-target rounded-panel border px-3 py-1.5 text-xs font-semibold transition',
+                  on ? 'border-signal bg-signal/15 text-white'
+                     : 'border-deck-500 bg-deck-900 text-chalk-dim hover:bg-deck-600')}>
                 {o}
               </button>
             )

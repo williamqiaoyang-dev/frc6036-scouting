@@ -7,7 +7,7 @@ import { matchId, SCHEMA_VERSION, type ScoutEvent, type Alliance } from '@/lib/s
 import { loadSettings } from '@/lib/settings'
 import { getCachedEvent, teamInfo } from '@/lib/tba'
 import type { CachedEvent } from '@/lib/schema'
-import { Card, Field, Pill, Toast } from '@/components/ui'
+import { Card, Field, Panel, Pill, Toast } from '@/components/ui'
 import { Counter } from './Counter'
 import { MatchTimer, useMatchClock } from './MatchTimer'
 
@@ -150,66 +150,75 @@ export default function MatchScout() {
   )
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4 p-4 pb-28">
+    <div className="mx-auto max-w-[1600px] space-y-4 p-4 pb-28">
       {/* ---------------------------------------------------------- identity */}
-      <Card className={clsx(
-        'border-l-4',
-        alliance === 'red' ? 'border-l-rose-500' : 'border-l-sky-500',
-      )}>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <Field label="Level">
-            <select className="input" value={matchLevel} onChange={(e) => setMatchLevel(e.target.value as any)}>
-              <option value="qm">Quals</option>
-              <option value="sf">Playoff</option>
-              <option value="f">Finals</option>
-              <option value="pr">Practice</option>
-            </select>
-          </Field>
-          <Field label="Match">
-            <input type="number" min={1} className="input tabular-nums" value={matchNumber}
-              onChange={(e) => setMatchNumber(Math.max(1, Number(e.target.value)))} />
-          </Field>
-          <Field label="Alliance">
-            <select className="input" value={alliance} onChange={(e) => setAlliance(e.target.value as Alliance)}>
-              <option value="red">Red</option>
-              <option value="blue">Blue</option>
-            </select>
-          </Field>
-          <Field label="Station">
-            <select className="input" value={station} onChange={(e) => setStation(Number(e.target.value))}>
-              <option value={1}>1</option><option value={2}>2</option><option value={3}>3</option>
-            </select>
-          </Field>
-          <Field label="Team"
-            hint={teamNumber !== '' && teamInfo(event, Number(teamNumber))?.nickname
-              ? teamInfo(event, Number(teamNumber))!.nickname
-              : scheduled ? 'from schedule' : undefined}>
-            <input type="number" className="input font-bold tabular-nums" value={teamNumber}
-              placeholder="6036"
-              onChange={(e) => setTeamNumber(e.target.value === '' ? '' : Number(e.target.value))} />
-          </Field>
-          <div className="flex items-end">
-            <div className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2">
-              <div className="label">Scout</div>
-              <div className="truncate text-sm font-semibold text-slate-300">
-                {settings.scoutName || <span className="text-rose-400">unset</span>}
+      {/* The alliance spine is the signature of this screen. Which alliance
+          you are watching is the single costliest thing to get wrong, so the
+          interface wears that colour rather than mentioning it in a label. */}
+      <div className="flex items-stretch gap-0">
+        <div className={clsx('w-1.5 shrink-0 rounded-l-panel',
+          alliance === 'red' ? 'bg-alliance-red' : 'bg-alliance-blue')} />
+
+        <div className="panel flex-1 rounded-l-none border-l-0">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-2 p-2.5 sm:grid-cols-3 lg:grid-cols-6">
+            <Field label="Level">
+              <select className="input" value={matchLevel} onChange={(e) => setMatchLevel(e.target.value as any)}>
+                <option value="qm">Quals</option>
+                <option value="sf">Playoff</option>
+                <option value="f">Finals</option>
+                <option value="pr">Practice</option>
+              </select>
+            </Field>
+            <Field label="Match">
+              <input type="number" min={1} className="input" value={matchNumber}
+                onChange={(e) => setMatchNumber(Math.max(1, Number(e.target.value)))} />
+            </Field>
+            <Field label="Alliance">
+              <select className={clsx('input font-600',
+                alliance === 'red' ? 'text-alliance-red' : 'text-alliance-blue')}
+                value={alliance} onChange={(e) => setAlliance(e.target.value as Alliance)}>
+                <option value="red">Red</option>
+                <option value="blue">Blue</option>
+              </select>
+            </Field>
+            <Field label="Station">
+              <select className="input" value={station} onChange={(e) => setStation(Number(e.target.value))}>
+                <option value={1}>1</option><option value={2}>2</option><option value={3}>3</option>
+              </select>
+            </Field>
+            <Field label="Team"
+              hint={teamNumber !== '' && teamInfo(event, Number(teamNumber))?.nickname
+                ? teamInfo(event, Number(teamNumber))!.nickname
+                : scheduled ? 'from the schedule' : undefined}>
+              <input type="number" className="input font-display text-[19px] font-700" value={teamNumber}
+                placeholder="6036"
+                onChange={(e) => setTeamNumber(e.target.value === '' ? '' : Number(e.target.value))} />
+            </Field>
+            <div className="flex items-end">
+              <div className="w-full rounded-panel border border-deck-500 bg-deck-900 px-2.5 py-1.5">
+                <div className="label">Scout</div>
+                <div className="truncate text-[15px] font-600 text-chalk">
+                  {settings.scoutName || <span className="text-signal">not set</span>}
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </Card>
+      </div>
 
       <MatchTimer game={game} elapsed={clock.elapsed} running={clock.running}
         onStart={clock.start} onStop={clock.stop} onReset={clock.reset} />
 
       {/* ------------------------------------------------------------ phases */}
-      <div className="flex gap-1 rounded-xl border border-white/10 bg-surface-1/60 p-1">
+      <div className="flex gap-px border-b border-deck-500">
         {PHASES.map((p) => (
           <button key={p.id} type="button"
             onClick={() => { setPhase(p.id); setManualPhase(true) }}
             className={clsx(
-              'flex-1 rounded-lg px-4 py-2 text-sm font-bold transition',
-              phase === p.id ? 'bg-peninsula-600 text-white' : 'text-slate-400 hover:bg-white/5',
+              'flex-1 border-b-2 px-4 py-2 font-display text-[17px] font-600 leading-none transition',
+              phase === p.id
+                ? 'border-signal text-chalk'
+                : 'border-transparent text-chalk-faint hover:text-chalk-dim',
             )}
           >
             {p.label}
@@ -233,7 +242,7 @@ export default function MatchScout() {
 
       {/* ------------------------------------------------------ subjective */}
       {phase === 'endgame' && (
-        <Card>
+        <Panel title="How it played">
           <div className="grid gap-4 sm:grid-cols-2">
             <Rating label="Defense played" value={defenseRating} onChange={setDefenseRating} />
             <Rating label="Driver skill" value={driverRating} onChange={setDriverRating} />
@@ -245,24 +254,29 @@ export default function MatchScout() {
           <div className="mt-4">
             <Field label="Notes">
               <textarea rows={3} className="input resize-none" value={notes}
-                placeholder="Anything the numbers miss — mechanism failures, strategy, penalties…"
+                placeholder="What the counters miss: mechanism failures, strategy, penalties."
                 onChange={(e) => setNotes(e.target.value)} />
             </Field>
           </div>
-        </Card>
+        </Panel>
       )}
 
       {/* --------------------------------------------------------- action bar */}
-      <div className="fixed inset-x-0 bottom-0 border-t border-white/10 bg-surface-0/95 p-3 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center gap-3">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-deck-500 bg-deck-900/95 backdrop-blur">
+        <div className={clsx('h-0.5', alliance === 'red' ? 'bg-alliance-red' : 'bg-alliance-blue')} />
+        <div className="mx-auto flex max-w-[1600px] items-center gap-3 px-3 py-2">
           <button type="button" onClick={undoLast} disabled={!events.length} className="btn-ghost">
-            Undo{events.length > 0 && <span className="text-slate-600">({events.length})</span>}
+            Undo{events.length > 0 && <span className="text-chalk-faint">{events.length}</span>}
           </button>
-          <div className="flex-1 text-xs text-slate-600">
-            {events.length} taps logged
-            {scheduled && <span className="ml-2 hidden sm:inline">· schedule: {scheduled[alliance].join(', ')}</span>}
+          <div className="flex-1 text-[12px] text-chalk-faint">
+            {events.length} taps recorded
+            {scheduled && (
+              <span className="ml-3 hidden sm:inline">
+                scheduled: {scheduled[alliance].join(', ')}
+              </span>
+            )}
           </div>
-          <button type="button" onClick={submit} className="btn-primary px-8">Save match</button>
+          <button type="button" onClick={submit} className="btn-primary px-6">Save match</button>
         </div>
       </div>
 
@@ -286,7 +300,7 @@ function StateControls({
   if (!selects.length && !toggles.length) return null
 
   return (
-    <Card className="space-y-4">
+    <Panel title={phase === 'endgame' ? 'Final state' : 'Match events'} bodyClass="space-y-4 p-3">
       {toggles.map((t) => (
         <Check key={t.id} label={t.label} checked={states[t.id] === true}
           onChange={(v) => onChange(t.id, v)} tone="emerald" />
@@ -294,22 +308,23 @@ function StateControls({
 
       {selects.map((s) => (
         <div key={s.id}>
-          <div className="label mb-2">{s.label}</div>
+          <div className="label mb-1.5">{s.label}</div>
           <div className="flex flex-wrap gap-2">
             {s.options.map((opt) => {
               const active = states[s.id] === opt.value
               return (
                 <button key={opt.value} type="button" onClick={() => onChange(s.id, opt.value)}
                   className={clsx(
-                    'tap-target rounded-lg border px-4 py-2.5 text-sm font-semibold transition active:scale-95',
+                    'tap-target rounded-panel border px-3.5 py-2 font-display text-[16px] font-600 transition active:translate-y-px',
                     active
-                      ? 'border-peninsula-400 bg-peninsula-600 text-white'
-                      : 'border-white/10 bg-surface-0/60 text-slate-400 hover:bg-white/5',
+                      ? 'border-signal bg-signal/15 text-signal'
+                      : 'border-deck-500 bg-deck-900 text-chalk-dim hover:bg-deck-600 hover:text-chalk',
                   )}
                 >
                   {opt.label}
                   {opt.points > 0 && (
-                    <span className={clsx('ml-2 text-xs', active ? 'text-white/70' : 'text-slate-600')}>
+                    <span className={clsx('ml-1.5 text-[12px] font-400',
+                      active ? 'text-signal/70' : 'text-chalk-faint')}>
                       {opt.points}
                     </span>
                   )}
@@ -317,25 +332,25 @@ function StateControls({
               )
             })}
           </div>
-          {s.hint && <p className="mt-1.5 text-xs text-slate-600">{s.hint}</p>}
+          {s.hint && <p className="mt-1.5 text-[12px] leading-tight text-chalk-faint">{s.hint}</p>}
         </div>
       ))}
-    </Card>
+    </Panel>
   )
 }
 
 function Rating({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
   return (
     <div>
-      <div className="label mb-2">{label}</div>
+      <div className="label mb-1.5">{label}</div>
       <div className="flex gap-1.5">
         {[1, 2, 3, 4, 5].map((n) => (
           <button key={n} type="button" onClick={() => onChange(value === n ? 0 : n)}
             className={clsx(
-              'tap-target h-11 flex-1 rounded-lg border text-sm font-bold transition active:scale-95',
+              'tap-target h-10 flex-1 rounded-panel border font-display text-[16px] font-700 transition active:translate-y-px',
               value >= n
-                ? 'border-peninsula-400 bg-peninsula-600 text-white'
-                : 'border-white/10 bg-surface-0/60 text-slate-500 hover:bg-white/5',
+                ? 'border-signal bg-signal/15 text-signal'
+                : 'border-deck-500 bg-deck-900 text-chalk-faint hover:bg-deck-600',
             )}
           >
             {n}
@@ -350,18 +365,19 @@ function Check({
   label, checked, onChange, tone,
 }: { label: string; checked: boolean; onChange: (v: boolean) => void; tone: string }) {
   const tones: Record<string, string> = {
-    amber: 'border-amber-500 bg-amber-600 text-white',
-    rose: 'border-rose-500 bg-rose-600 text-white',
-    emerald: 'border-emerald-500 bg-emerald-600 text-white',
+    amber: 'border-signal bg-signal/15 text-signal',
+    rose: 'border-alliance-red bg-alliance-red/15 text-alliance-red',
+    emerald: 'border-emerald-400 bg-emerald-400/15 text-emerald-300',
   }
   return (
     <button type="button" onClick={() => onChange(!checked)}
+      aria-pressed={checked}
       className={clsx(
-        'tap-target rounded-lg border px-4 py-2.5 text-sm font-semibold transition active:scale-95',
-        checked ? tones[tone] : 'border-white/10 bg-surface-0/60 text-slate-400 hover:bg-white/5',
+        'tap-target rounded-panel border px-3.5 py-2 font-display text-[16px] font-600 transition active:translate-y-px',
+        checked ? tones[tone] : 'border-deck-500 bg-deck-900 text-chalk-dim hover:bg-deck-600 hover:text-chalk',
       )}
     >
-      {checked ? '✓ ' : ''}{label}
+      {label}
     </button>
   )
 }

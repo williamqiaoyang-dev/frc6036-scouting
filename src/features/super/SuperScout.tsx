@@ -67,8 +67,8 @@ export default function SuperScout() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4 p-4 pb-28">
-      <Card className={clsx('border-l-4', alliance === 'red' ? 'border-l-rose-500' : 'border-l-sky-500')}>
+    <div className="mx-auto max-w-[1600px] space-y-4 p-4 pb-28">
+      <Card className={clsx('border-l-4', alliance === 'red' ? 'border-l-alliance-red' : 'border-l-alliance-blue')}>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Field label="Level">
             <select className="input" value={matchLevel} onChange={(e) => setMatchLevel(e.target.value as any)}>
@@ -86,10 +86,10 @@ export default function SuperScout() {
             </select>
           </Field>
           <div className="flex items-end">
-            <div className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+            <div className="w-full rounded-panel border border-deck-500 bg-deck-900 px-3 py-2">
               <div className="label">Scout</div>
-              <div className="truncate text-sm font-semibold text-slate-300">
-                {settings.scoutName || <span className="text-rose-400">unset</span>}
+              <div className="truncate text-sm font-semibold text-chalk">
+                {settings.scoutName || <span className="text-alliance-red">unset</span>}
               </div>
             </div>
           </div>
@@ -114,11 +114,11 @@ export default function SuperScout() {
           </thead>
           <tbody>
             {game.superRatings.map((rating) => (
-              <tr key={rating.id} className="border-t border-white/5">
+              <tr key={rating.id} className="border-t border-deck-600">
                 <td className="py-3 pr-4 align-top">
-                  <div className="text-sm font-semibold text-slate-200">{rating.label}</div>
-                  <div className="mt-0.5 text-[11px] leading-tight text-slate-500">{rating.description}</div>
-                  <div className="mt-1 text-[10px] text-slate-600">
+                  <div className="text-sm font-semibold text-chalk">{rating.label}</div>
+                  <div className="mt-0.5 text-[11px] leading-tight text-chalk-dim">{rating.description}</div>
+                  <div className="mt-1 text-[10px] text-chalk-faint">
                     1 = {rating.lowLabel} · 5 = {rating.highLabel}
                   </div>
                 </td>
@@ -131,8 +131,8 @@ export default function SuperScout() {
                           className={clsx(
                             'tap-target h-10 flex-1 rounded border text-xs font-bold transition active:scale-95 disabled:opacity-30',
                             (ratings[team]?.[rating.id] ?? 0) >= n
-                              ? 'border-peninsula-400 bg-peninsula-600 text-white'
-                              : 'border-white/10 bg-surface-0/60 text-slate-500 hover:bg-white/5',
+                              ? 'border-signal bg-signal/15 text-white'
+                              : 'border-deck-500 bg-deck-900 text-chalk-dim hover:bg-deck-600',
                           )}>
                           {n}
                         </button>
@@ -142,8 +142,8 @@ export default function SuperScout() {
                 ))}
               </tr>
             ))}
-            <tr className="border-t border-white/5">
-              <td className="py-3 pr-4 align-top text-sm font-semibold text-slate-200">Notes</td>
+            <tr className="border-t border-deck-600">
+              <td className="py-3 pr-4 align-top text-sm font-semibold text-chalk">Notes</td>
               {teams.map((team, i) => (
                 <td key={i} className="px-2 py-3">
                   <textarea rows={3} className="input resize-none text-xs" disabled={!team}
@@ -156,8 +156,8 @@ export default function SuperScout() {
         </table>
       </Card>
 
-      <div className="fixed inset-x-0 bottom-0 border-t border-white/10 bg-surface-0/95 p-3 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-end gap-3">
+      <div className="fixed inset-x-0 bottom-0 border-t border-deck-500 bg-deck-900/95 p-3 backdrop-blur">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-end gap-3">
           <button type="button" onClick={submit} className="btn-primary px-8">Save alliance</button>
         </div>
       </div>

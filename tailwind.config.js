@@ -4,19 +4,51 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Team 6036 Peninsula Robotics
-        peninsula: {
-          50: '#eef6ff', 100: '#d9eaff', 200: '#bcdbff', 300: '#8ec4ff',
-          400: '#59a3ff', 500: '#337dff', 600: '#1b5cf5', 700: '#1447e1',
-          800: '#173bb6', 900: '#19378f', 950: '#142357',
+        /**
+         * Grounded in the field, not in a UI kit.
+         *
+         * Every FRC field is red versus blue, so those are structural colors
+         * here, never decoration. The greys are anodized aluminium rather
+         * than the usual blue-tinted slate; signal yellow is the colour of
+         * the match timer and the caution tape around the field.
+         */
+        deck: {
+          900: '#0E1011',  // deepest — page ground
+          800: '#141719',  // panel ground
+          700: '#1A1E21',  // raised panel
+          600: '#232829',  // hover / inset
+          500: '#31383A',  // hairlines
         },
-        surface: {
-          0: '#0b0f1a', 1: '#111726', 2: '#18203353', 3: '#1c2436',
+        alliance: {
+          red: '#F4364C',
+          redDeep: '#B00D22',
+          blue: '#3B8CFF',
+          blueDeep: '#0B4FBF',
+        },
+        signal: {
+          DEFAULT: '#FFC400',  // live, attention, in-progress
+          dim: '#8A6B00',
+        },
+        chalk: {
+          DEFAULT: '#E9E7E3',  // primary text — warm, like printed drawings
+          dim: '#9AA0A4',
+          faint: '#666D71',
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        // Barlow: drawn from California highway signage. Legible at a glance
+        // in bad gym lighting, which is the actual reading condition.
+        sans: ['Barlow', 'system-ui', '-apple-system', 'sans-serif'],
+        display: ['"Barlow Condensed"', 'Barlow', 'system-ui', 'sans-serif'],
+      },
+      fontWeight: {
+        // Numeric weights read more like a spec sheet than semibold/bold do,
+        // and Barlow ships all four.
+        400: '400', 500: '500', 600: '600', 700: '700',
+      },
+      borderRadius: {
+        // Equipment has tight corners, not pill-shaped everything.
+        panel: '3px',
       },
     },
   },

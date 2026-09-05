@@ -110,10 +110,10 @@ export function VideoPlayer({
 
   if (error) {
     return (
-      <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-center">
-        <p className="text-sm text-rose-300">{error}</p>
+      <div className="rounded-panel border border-alliance-red/40 bg-alliance-red/10 p-6 text-center">
+        <p className="text-sm text-alliance-red">{error}</p>
         <a href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noreferrer"
-          className="mt-2 inline-block text-xs text-slate-400 hover:text-slate-200">
+          className="mt-2 inline-block text-xs text-chalk-dim hover:text-chalk">
           Watch on YouTube ↗
         </a>
       </div>
@@ -121,20 +121,20 @@ export function VideoPlayer({
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-white/10 bg-black">
+    <div className="overflow-hidden rounded-panel border border-deck-500 bg-black">
       <div className="relative aspect-video">
         <div ref={hostRef} className="absolute inset-0 h-full w-full" />
         {!ready && (
           <div className="absolute inset-0 flex items-center justify-center bg-black">
-            <span className="text-sm text-slate-600">Loading player…</span>
+            <span className="text-sm text-chalk-faint">Loading player…</span>
           </div>
         )}
       </div>
 
       {/* Marker rail — every pinned moment on the timeline, click to jump. */}
       {duration > 0 && (
-        <div className="relative h-6 border-t border-white/10 bg-surface-1/60">
-          <div className="absolute inset-y-0 left-0 bg-peninsula-600/20"
+        <div className="relative h-6 border-t border-deck-500 bg-deck-800">
+          <div className="absolute inset-y-0 left-0 bg-signal/15"
             style={{ width: `${Math.min(100, (time / duration) * 100)}%` }} />
           {markers.map((m) => (
             <button key={m.id} type="button"
@@ -161,15 +161,15 @@ export function VideoPlayer({
         <button type="button" onClick={() => step(5)} disabled={!ready}
           className="btn-ghost h-8 py-0 text-xs disabled:opacity-30" title="Forward 5s (→)">+5s</button>
 
-        <span className="ml-1 font-mono text-xs tabular-nums text-slate-400">
-          {formatTime(time)}{duration > 0 && <span className="text-slate-600"> / {formatTime(duration)}</span>}
+        <span className="ml-1 font-mono text-xs tabular-nums text-chalk-dim">
+          {formatTime(time)}{duration > 0 && <span className="text-chalk-faint"> / {formatTime(duration)}</span>}
         </span>
 
         <div className="ml-auto flex items-center gap-1">
           {[0.25, 0.5, 1].map((r) => (
             <button key={r} type="button" onClick={() => setSpeed(r)} disabled={!ready}
               className={clsx('h-8 rounded px-2 text-xs font-semibold transition disabled:opacity-30',
-                rate === r ? 'bg-peninsula-600 text-white' : 'text-slate-500 hover:bg-white/5')}>
+                rate === r ? 'bg-signal/15 text-white' : 'text-chalk-dim hover:bg-deck-600')}>
               {r}×
             </button>
           ))}
@@ -181,9 +181,9 @@ export function VideoPlayer({
 
 export const MARKER_COLORS: Record<string, string> = {
   good: 'bg-emerald-400',
-  cycle: 'bg-sky-400',
+  cycle: 'bg-alliance-blue',
   defense: 'bg-violet-400',
-  breakdown: 'bg-rose-400',
-  penalty: 'bg-amber-400',
+  breakdown: 'bg-alliance-red',
+  penalty: 'bg-signal',
   note: 'bg-slate-400',
 }

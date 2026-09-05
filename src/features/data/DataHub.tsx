@@ -83,14 +83,14 @@ export default function DataHub() {
         <StatTile label="Super sheets" value={counts?.supers ?? 0} />
         <StatTile label="Video markers" value={counts?.markers ?? 0} />
         <StatTile label="Not transferred" value={counts?.unsynced ?? 0}
-          tone={(counts?.unsynced ?? 0) > 0 ? 'text-amber-300' : 'text-slate-100'} />
+          tone={(counts?.unsynced ?? 0) > 0 ? 'text-signal' : 'text-chalk'} />
       </div>
 
-      <div className="flex gap-1 rounded-xl border border-white/10 bg-surface-1/60 p-1">
+      <div className="flex gap-1 rounded-panel border border-deck-500 bg-deck-800 p-1">
         {(['export', 'import'] as Mode[]).map((m) => (
           <button key={m} type="button" onClick={() => setMode(m)}
-            className={`flex-1 rounded-lg px-4 py-2 text-sm font-bold capitalize transition ${
-              mode === m ? 'bg-peninsula-600 text-white' : 'text-slate-400 hover:bg-white/5'}`}>
+            className={`flex-1 rounded-panel px-4 py-2 text-sm font-bold capitalize transition ${
+              mode === m ? 'bg-signal/15 text-white' : 'text-chalk-dim hover:bg-deck-600'}`}>
             {m === 'export' ? 'Send data' : 'Receive data'}
           </button>
         ))}
@@ -106,7 +106,7 @@ export default function DataHub() {
               <button type="button" onClick={() => setOnlyUnsynced(false)}
                 className={!onlyUnsynced ? 'btn-primary' : 'btn-ghost'}>Everything</button>
               {bundle && (
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-chalk-dim">
                   {bundle.matches.length + bundle.pits.length + bundle.supers.length + bundle.markers.length} records · {(size / 1024).toFixed(1)} KB
                 </span>
               )}
@@ -118,7 +118,7 @@ export default function DataHub() {
               bundle && (bundle.matches.length + bundle.pits.length + bundle.supers.length + bundle.markers.length) > 0 ? (
                 <button type="button" onClick={async () => {
                   await markSynced(bundle); flash('Marked as transferred.', 'green')
-                }} className="text-xs text-slate-500 hover:text-slate-300">
+                }} className="text-xs text-chalk-dim hover:text-chalk">
                   Mark transferred
                 </button>
               ) : undefined
@@ -139,7 +139,7 @@ export default function DataHub() {
                 className="btn-ghost">Download .json bundle</button>
               <button type="button" onClick={exportCsv} className="btn-ghost">Download matches .csv</button>
             </div>
-            <p className="mt-2 text-xs text-slate-600">
+            <p className="mt-2 text-xs text-chalk-faint">
               The JSON bundle is the transfer format — it round-trips into another device.
               The CSV is a flat, one-row-per-robot-match view for spreadsheets.
             </p>
@@ -159,7 +159,7 @@ export default function DataHub() {
               <input type="file" accept="application/json,.json" className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = '' }} />
             </label>
-            <p className="mt-2 text-xs text-slate-600">
+            <p className="mt-2 text-xs text-chalk-faint">
               Imports merge by record id, keeping whichever copy was edited most recently.
               Re-importing the same file is safe.
             </p>

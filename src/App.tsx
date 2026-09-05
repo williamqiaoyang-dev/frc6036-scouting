@@ -64,42 +64,49 @@ export default function App() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-surface-0/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-2.5">
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono text-lg font-extrabold text-peninsula-400">6036</span>
-            <span className="hidden text-xs font-semibold uppercase tracking-wider text-slate-500 sm:inline">
+      <header className="sticky top-0 z-40 border-b border-deck-500 bg-deck-900/95 backdrop-blur">
+        <div className="mx-auto flex max-w-[1600px] items-center gap-5 px-3 py-1.5">
+          <div className="flex items-baseline gap-1.5">
+            <span className="font-display text-[22px] font-700 leading-none text-chalk">6036</span>
+            <span className="hidden font-display text-[13px] font-500 leading-none text-chalk-faint sm:inline">
               Scouting
             </span>
           </div>
 
-          <nav className="flex flex-1 gap-0.5 overflow-x-auto">
+          <nav className="flex flex-1 gap-px overflow-x-auto">
             {NAV.map((item) => (
               <NavLink key={item.to} to={item.to}
                 className={({ isActive }) => clsx(
-                  'whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-semibold transition',
-                  isActive ? 'bg-peninsula-600/20 text-peninsula-300' : 'text-slate-500 hover:bg-white/5 hover:text-slate-300',
+                  'whitespace-nowrap px-2.5 py-1 font-display text-[15px] font-600 leading-none transition',
+                  'border-b-2',
+                  isActive
+                    ? 'border-signal text-chalk'
+                    : 'border-transparent text-chalk-faint hover:text-chalk-dim',
                 )}>
                 {item.label}
               </NavLink>
             ))}
           </nav>
 
-          <div className="hidden items-center gap-3 text-xs md:flex">
-            <span className="text-slate-600">{game.year} {game.name}</span>
+          <div className="hidden items-center gap-3 text-[12px] md:flex">
+            <span className="text-chalk-faint">{game.year} {game.name}</span>
             {settings.eventKey && (
-              <span className="rounded bg-white/5 px-2 py-0.5 font-mono text-slate-400">
+              <span className="rounded-panel border border-deck-500 px-1.5 py-0.5 text-chalk-dim">
                 {settings.eventKey}
               </span>
             )}
-            <span className={clsx('h-2 w-2 rounded-full', online ? 'bg-emerald-500' : 'bg-slate-600')}
-              title={online ? 'Online' : 'Offline — data is saved locally'} />
+            <span
+              title={online ? 'Online' : 'Offline — everything is saved on this device'}
+              className={clsx('h-1.5 w-1.5 rounded-full',
+                online ? 'bg-emerald-400' : 'bg-signal')} />
           </div>
         </div>
       </header>
 
       <main className="flex-1">
-        <Suspense fallback={<div className="p-8 text-center text-sm text-slate-600">Loading…</div>}>
+        <Suspense fallback={
+          <div className="p-10 text-center text-[14px] text-chalk-faint">Loading…</div>
+        }>
         <Routes>
           <Route path="/" element={<Navigate to="/match" replace />} />
           <Route path="/match" element={<MatchScout />} />

@@ -5,43 +5,91 @@
 @layer base {
   :root { color-scheme: dark; }
   html, body, #root { height: 100%; }
+
   body {
-    @apply bg-surface-0 text-slate-200 font-sans antialiased;
-    /* Scouts tap fast and repeatedly; never let the browser select text or
-       zoom on a double-tap mid-match. */
+    @apply bg-deck-900 text-chalk font-sans antialiased;
+    /* Scouts tap the same buttons hundreds of times per match. Never let the
+       browser select text, zoom on a double-tap, or rubber-band the page. */
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior: none;
+    font-feature-settings: 'tnum' 1;   /* tabular figures everywhere: columns line up */
   }
-  ::selection { @apply bg-peninsula-600/40; }
+
+  ::selection { @apply bg-alliance-blue/30; }
+
+  /* Keyboard focus has to survive a dark, high-glare gym. */
+  :focus-visible {
+    outline: 2px solid theme('colors.signal.DEFAULT');
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
 }
 
 @layer components {
-  .card {
-    @apply rounded-xl border border-white/10 bg-surface-1/80 backdrop-blur;
+  /**
+   * Panels, not cards. An instrument panel is framed and squared off; it does
+   * not float on a soft shadow. Hierarchy comes from the header rule and
+   * density, so every panel does not need to look equally important.
+   */
+  .panel {
+    @apply rounded-panel border border-deck-500/70 bg-deck-800;
   }
+
+  /* A panel that leads with a labelled header bar. */
+  .panel-head {
+    @apply flex items-baseline justify-between gap-3 border-b border-deck-500/70
+           bg-deck-700/60 px-3 py-2;
+  }
+
+  .panel-title {
+    @apply font-display text-[15px] font-600 leading-none tracking-[0.01em] text-chalk;
+  }
+
+  /* Field labels sit beside or under their control in sentence case — no
+     tracked-out caps eyebrow shouting above every single thing. */
   .label {
-    @apply text-[11px] font-semibold uppercase tracking-wider text-slate-500;
+    @apply text-[12px] font-medium leading-tight text-chalk-dim;
   }
+
   .input {
-    @apply w-full rounded-lg border border-white/10 bg-surface-0 px-3 py-2 text-sm
-           text-slate-100 outline-none transition
-           placeholder:text-slate-600
-           focus:border-peninsula-500 focus:ring-2 focus:ring-peninsula-500/25;
+    @apply w-full rounded-panel border border-deck-500 bg-deck-900 px-2.5 py-1.5
+           text-[15px] text-chalk outline-none transition
+           placeholder:text-chalk-faint
+           focus:border-alliance-blue focus:ring-1 focus:ring-alliance-blue/40;
   }
+
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2
-           text-sm font-semibold transition active:scale-[.98]
-           disabled:pointer-events-none disabled:opacity-40;
+    @apply inline-flex items-center justify-center gap-2 rounded-panel px-3.5 py-1.5
+           text-[14px] font-600 leading-none transition active:translate-y-px
+           disabled:pointer-events-none disabled:opacity-35;
   }
-  .btn-primary { @apply btn bg-peninsula-600 text-white hover:bg-peninsula-500; }
-  .btn-ghost   { @apply btn border border-white/10 text-slate-300 hover:bg-white/5; }
-  .btn-danger  { @apply btn bg-rose-600/90 text-white hover:bg-rose-500; }
+  .btn-primary {
+    @apply btn bg-chalk text-deck-900 hover:bg-white;
+  }
+  .btn-ghost {
+    @apply btn border border-deck-500 text-chalk-dim hover:border-deck-500 hover:bg-deck-600 hover:text-chalk;
+  }
+  .btn-danger {
+    @apply btn bg-alliance-redDeep text-white hover:bg-alliance-red;
+  }
+
+  /* Big readouts: match clock, counter values, team numbers. */
+  .readout {
+    @apply font-display tabular-nums leading-none;
+  }
 }
 
-/* The counter buttons are the single most-used control in the app.
-   No text selection, no callout, no scroll-jank while tapping. */
+/* The counters are the single most-pressed control. Nothing may interfere. */
 .tap-target {
   touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Hairline grid used to separate dense table rows without heavy borders. */
+.rule-rows > * + * {
+  border-top: 1px solid theme('colors.deck.600');
 }

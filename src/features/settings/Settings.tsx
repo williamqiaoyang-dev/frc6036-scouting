@@ -114,18 +114,18 @@ export default function Settings() {
             className="btn-ghost">
             {busy === 'team-events' ? 'Loading…' : `Find ${TEAM}'s events`}
           </button>
-          <span className="text-xs text-slate-600">or enter any event key below</span>
+          <span className="text-xs text-chalk-faint">or enter any event key below</span>
         </div>
 
         {teamEvents.length > 0 && (
           <div className="mt-3 space-y-1">
             {teamEvents.map((e) => (
               <button key={e.key} type="button" onClick={() => syncEvent(e.key)}
-                className="flex w-full items-center gap-3 rounded-lg border border-white/10 p-2.5 text-left transition hover:bg-white/5">
-                <span className="font-mono text-xs text-peninsula-300">{e.key}</span>
-                <span className="flex-1 truncate text-sm text-slate-300">{e.name}</span>
-                <span className="text-xs text-slate-600">{e.start}</span>
-                {busy === e.key && <span className="text-xs text-slate-500">syncing…</span>}
+                className="flex w-full items-center gap-3 rounded-panel border border-deck-500 p-2.5 text-left transition hover:bg-deck-600">
+                <span className="font-mono text-xs text-chalk">{e.key}</span>
+                <span className="flex-1 truncate text-sm text-chalk">{e.name}</span>
+                <span className="text-xs text-chalk-faint">{e.start}</span>
+                {busy === e.key && <span className="text-xs text-chalk-dim">syncing…</span>}
               </button>
             ))}
           </div>
@@ -146,8 +146,8 @@ export default function Settings() {
         </Field>
 
         {progress && (
-          <p className="mt-2 text-xs text-peninsula-300">
-            {progress} <span className="text-slate-600">— robot photos are one request per team, so this takes a moment.</span>
+          <p className="mt-2 text-xs text-chalk">
+            {progress} <span className="text-chalk-faint">— robot photos are one request per team, so this takes a moment.</span>
           </p>
         )}
 
@@ -157,13 +157,13 @@ export default function Settings() {
             <div className="space-y-1">
               {cached.map((e) => (
                 <button key={e.eventKey} type="button" onClick={() => set('eventKey', e.eventKey)}
-                  className={`flex w-full items-center gap-3 rounded-lg border p-2.5 text-left transition ${
+                  className={`flex w-full items-center gap-3 rounded-panel border p-2.5 text-left transition ${
                     e.eventKey === settings.eventKey
-                      ? 'border-peninsula-500/50 bg-peninsula-600/10'
-                      : 'border-white/10 hover:bg-white/5'}`}>
-                  <span className="font-mono text-xs text-peninsula-300">{e.eventKey}</span>
-                  <span className="flex-1 truncate text-sm text-slate-300">{e.name}</span>
-                  <span className="text-xs text-slate-600">
+                      ? 'border-signal/50 bg-signal/10'
+                      : 'border-deck-500 hover:bg-deck-600'}`}>
+                  <span className="font-mono text-xs text-chalk">{e.eventKey}</span>
+                  <span className="flex-1 truncate text-sm text-chalk">{e.name}</span>
+                  <span className="text-xs text-chalk-faint">
                     {e.teams.length} teams · {e.matches.length} matches
                   </span>
                 </button>
@@ -187,7 +187,7 @@ export default function Settings() {
       <Card>
         <SectionTitle>Danger zone</SectionTitle>
         <button type="button" onClick={wipe} className="btn-danger">Erase all local data</button>
-        <p className="mt-2 text-xs text-slate-600">
+        <p className="mt-2 text-xs text-chalk-faint">
           Export anything you need first — this wipes matches, pit sheets, super sheets and picklists on this device.
         </p>
       </Card>

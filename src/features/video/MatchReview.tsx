@@ -82,36 +82,36 @@ export default function MatchReview() {
   const videoCount = event.matches.filter((m) => m.videos.length > 0).length
 
   return (
-    <div className="mx-auto grid max-w-7xl gap-4 p-4 lg:grid-cols-[280px_1fr]">
+    <div className="mx-auto grid max-w-[1600px] gap-4 p-4 lg:grid-cols-[280px_1fr]">
       {/* ------------------------------------------------------ match picker */}
       <Card className="p-0">
-        <div className="border-b border-white/10 p-3">
+        <div className="border-b border-deck-500 p-3">
           <SectionTitle>Matches</SectionTitle>
-          <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-500">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-chalk-dim">
             <input type="checkbox" checked={onlyWithVideo}
               onChange={(e) => { setOnlyWithVideo(e.target.checked); setSelected(null) }}
-              className="accent-peninsula-500" />
+              className="accent-signal" />
             Only with video ({videoCount})
           </label>
         </div>
-        <div className="max-h-[70vh] divide-y divide-white/5 overflow-y-auto">
+        <div className="max-h-[70vh] divide-y divide-deck-600 overflow-y-auto">
           {played.map((m) => (
             <button key={m.key} type="button" onClick={() => setSelected(m)}
               className={clsx('flex w-full items-center gap-2 p-2.5 text-left transition',
-                selected?.key === m.key ? 'bg-peninsula-600/15' : 'hover:bg-white/5')}>
-              <span className="w-14 shrink-0 font-mono text-xs font-bold text-slate-300">
+                selected?.key === m.key ? 'bg-signal/15' : 'hover:bg-deck-600')}>
+              <span className="w-14 shrink-0 font-mono text-xs font-bold text-chalk">
                 {matchLabel(m)}
               </span>
               <span className="flex-1 text-xs tabular-nums">
-                <span className={m.redScore! > m.blueScore! ? 'font-bold text-rose-400' : 'text-slate-500'}>
+                <span className={m.redScore! > m.blueScore! ? 'font-bold text-alliance-red' : 'text-chalk-dim'}>
                   {m.redScore}
                 </span>
-                <span className="mx-1 text-slate-700">–</span>
-                <span className={m.blueScore! > m.redScore! ? 'font-bold text-sky-400' : 'text-slate-500'}>
+                <span className="mx-1 text-chalk-faint">–</span>
+                <span className={m.blueScore! > m.redScore! ? 'font-bold text-alliance-blue' : 'text-chalk-dim'}>
                   {m.blueScore}
                 </span>
               </span>
-              {m.videos.length > 0 && <span className="shrink-0 text-[10px] text-peninsula-400">▶</span>}
+              {m.videos.length > 0 && <span className="shrink-0 text-[10px] text-chalk-dim">▶</span>}
             </button>
           ))}
         </div>
@@ -151,16 +151,16 @@ export default function MatchReview() {
                 const other = side === 'red' ? selected.blueScore : selected.redScore
                 const rp = side === 'red' ? selected.redRp : selected.blueRp
                 return (
-                  <div key={side} className={clsx('rounded-lg border p-3',
-                    side === 'red' ? 'border-rose-500/30 bg-rose-500/10' : 'border-sky-500/30 bg-sky-500/10')}>
+                  <div key={side} className={clsx('rounded-panel border p-3',
+                    side === 'red' ? 'border-alliance-red/40 bg-alliance-red/10' : 'border-alliance-blue/40 bg-alliance-blue/10')}>
                     <div className="flex items-baseline justify-between">
                       <span className={clsx('text-xs font-bold uppercase',
-                        side === 'red' ? 'text-rose-300' : 'text-sky-300')}>
+                        side === 'red' ? 'text-alliance-red' : 'text-alliance-blue')}>
                         {side}
                       </span>
-                      <span className="text-2xl font-extrabold tabular-nums text-slate-100">{score}</span>
+                      <span className="text-2xl font-extrabold tabular-nums text-chalk">{score}</span>
                     </div>
-                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-chalk-dim">
                       <span className="font-mono">{selected[side].join(' · ')}</span>
                       {rp !== null && <span>{rp} RP</span>}
                     </div>
@@ -176,7 +176,7 @@ export default function MatchReview() {
           {/* What our scouts recorded, per robot */}
           <Card>
             <SectionTitle right={
-              <span className="text-[11px] text-slate-600">
+              <span className="text-[11px] text-chalk-faint">
                 {records.length}/6 robots scouted
               </span>
             }>
@@ -189,13 +189,13 @@ export default function MatchReview() {
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[560px] border-collapse text-sm">
-                  <thead className="border-b border-white/10">
+                  <thead className="border-b border-deck-500">
                     <tr>
-                      <th className="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Team</th>
-                      <th className="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Scout</th>
-                      <th className="px-2 py-2 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">FUEL</th>
-                      <th className="px-2 py-2 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Climb</th>
-                      <th className="px-2 py-2 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Est. pts</th>
+                      <th className="px-2 py-2 text-left font-display text-[13px] font-600 text-chalk-dim">Team</th>
+                      <th className="px-2 py-2 text-left font-display text-[13px] font-600 text-chalk-dim">Scout</th>
+                      <th className="px-2 py-2 text-right font-display text-[13px] font-600 text-chalk-dim">FUEL</th>
+                      <th className="px-2 py-2 text-right font-display text-[13px] font-600 text-chalk-dim">Climb</th>
+                      <th className="px-2 py-2 text-right font-display text-[13px] font-600 text-chalk-dim">Est. pts</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -204,9 +204,9 @@ export default function MatchReview() {
                         const rec = records.find((r) => r.teamNumber === team)
                         if (!rec) {
                           return (
-                            <tr key={`${side}-${team}`} className="border-b border-white/5 opacity-40">
-                              <td className="px-2 py-2 font-mono font-bold text-slate-400">{team}</td>
-                              <td colSpan={4} className="px-2 py-2 text-xs text-slate-600">not scouted</td>
+                            <tr key={`${side}-${team}`} className="border-b border-deck-600 opacity-40">
+                              <td className="px-2 py-2 font-mono font-bold text-chalk-dim">{team}</td>
+                              <td colSpan={4} className="px-2 py-2 text-xs text-chalk-faint">not scouted</td>
                             </tr>
                           )
                         }
@@ -214,20 +214,20 @@ export default function MatchReview() {
                         const score = scoreBreakdown(game, rec)
                         const fuel = (totals.auto_fuel_scored ?? 0) + (totals.teleop_fuel_scored ?? 0)
                         return (
-                          <tr key={`${side}-${team}`} className="border-b border-white/5">
+                          <tr key={`${side}-${team}`} className="border-b border-deck-600">
                             <td className="px-2 py-2">
                               <Link to={`/analysis/${team}`}
                                 className={clsx('font-mono font-bold hover:underline',
-                                  side === 'red' ? 'text-rose-300' : 'text-sky-300')}>
+                                  side === 'red' ? 'text-alliance-red' : 'text-alliance-blue')}>
                                 {team}
                               </Link>
                             </td>
-                            <td className="px-2 py-2 text-xs text-slate-500">{rec.scoutName}</td>
-                            <td className="px-2 py-2 text-right font-semibold tabular-nums text-slate-200">{fuel}</td>
-                            <td className="px-2 py-2 text-right text-xs text-slate-400">
+                            <td className="px-2 py-2 text-xs text-chalk-dim">{rec.scoutName}</td>
+                            <td className="px-2 py-2 text-right font-semibold tabular-nums text-chalk">{fuel}</td>
+                            <td className="px-2 py-2 text-right text-xs text-chalk-dim">
                               {String(rec.states.endgame_climb ?? 'none')}
                             </td>
-                            <td className="px-2 py-2 text-right font-semibold tabular-nums text-slate-200">
+                            <td className="px-2 py-2 text-right font-semibold tabular-nums text-chalk">
                               {score.total}
                             </td>
                           </tr>
@@ -265,25 +265,25 @@ function ScoutVsOfficial({
   })
 
   return (
-    <div className="mt-4 border-t border-white/10 pt-3">
+    <div className="mt-4 border-t border-deck-500 pt-3">
       <div className="label mb-2">Scouted vs official</div>
       <div className="space-y-1.5">
         {rows.map((r) => (
           <div key={r.side} className="flex items-center gap-3 text-xs">
             <span className={clsx('w-10 font-bold uppercase',
-              r.side === 'red' ? 'text-rose-400' : 'text-sky-400')}>{r.side}</span>
-            <span className="tabular-nums text-slate-400">
-              scouted <span className="font-semibold text-slate-200">{r.estimate}</span>
+              r.side === 'red' ? 'text-alliance-red' : 'text-alliance-blue')}>{r.side}</span>
+            <span className="tabular-nums text-chalk-dim">
+              scouted <span className="font-semibold text-chalk">{r.estimate}</span>
             </span>
-            <span className="text-slate-700">vs</span>
-            <span className="tabular-nums text-slate-400">
-              official <span className="font-semibold text-slate-200">{r.official}</span>
+            <span className="text-chalk-faint">vs</span>
+            <span className="tabular-nums text-chalk-dim">
+              official <span className="font-semibold text-chalk">{r.official}</span>
             </span>
-            {!r.complete && <span className="text-amber-500">partial data</span>}
+            {!r.complete && <span className="text-signal">partial data</span>}
           </div>
         ))}
       </div>
-      <p className="mt-2 text-[11px] leading-relaxed text-slate-600">
+      <p className="mt-2 text-[11px] leading-relaxed text-chalk-faint">
         These will not match exactly — FUEL scores only in an active HUB, and fouls
         aren't scouted. A large, one-sided gap usually means a miscount, not a rules quirk.
       </p>

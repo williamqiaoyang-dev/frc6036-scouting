@@ -12,10 +12,10 @@ const TIERS = ['First pick', 'Second pick', 'Role player', 'Defense', 'Do not pi
 
 const TIER_STYLES: Record<string, string> = {
   'First pick': 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-  'Second pick': 'bg-sky-500/15 text-sky-300 border-sky-500/30',
-  'Role player': 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+  'Second pick': 'bg-alliance-blue/15 text-alliance-blue border-alliance-blue/40',
+  'Role player': 'bg-signal/15 text-signal border-signal/30',
   'Defense': 'bg-violet-500/15 text-violet-300 border-violet-500/30',
-  'Do not pick': 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+  'Do not pick': 'bg-alliance-red/15 text-alliance-red border-alliance-red/40',
 }
 
 /**
@@ -65,21 +65,21 @@ export default function PicklistView() {
     })
   }
 
-  if (loading) return <div className="p-8 text-center text-slate-600">Loading…</div>
+  if (loading) return <div className="p-8 text-center text-chalk-faint">Loading…</div>
 
   return (
-    <div className="mx-auto grid max-w-7xl gap-4 p-4 lg:grid-cols-[1fr_320px]">
+    <div className="mx-auto grid max-w-[1600px] gap-4 p-4 lg:grid-cols-[1fr_320px]">
       <Card className="p-0">
-        <div className="border-b border-white/10 p-4">
+        <div className="border-b border-deck-500 p-4">
           <SectionTitle right={
             <button type="button" onClick={() => setEntries([])} disabled={!entries.length}
-              className="text-xs text-slate-600 hover:text-rose-400 disabled:opacity-40">
+              className="text-xs text-chalk-faint hover:text-alliance-red disabled:opacity-40">
               Clear
             </button>
           }>
             Picklist — {entries.length} teams
           </SectionTitle>
-          <p className="text-xs text-slate-600">Drag rows to reorder. Changes save automatically.</p>
+          <p className="text-xs text-chalk-faint">Drag rows to reorder. Changes save automatically.</p>
         </div>
 
         {entries.length === 0 ? (
@@ -87,7 +87,7 @@ export default function PicklistView() {
             <Empty title="Empty picklist" hint="Add teams from the panel on the right." />
           </div>
         ) : (
-          <div className="divide-y divide-white/5">
+          <div className="divide-y divide-deck-600">
             {entries.map((entry, i) => {
               const summary = summaries.find((s) => s.teamNumber === entry.teamNumber)
               return (
@@ -96,15 +96,15 @@ export default function PicklistView() {
                   onDragStart={() => setDragIndex(i)}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={() => { if (dragIndex !== null) reorder(dragIndex, i); setDragIndex(null) }}
-                  className={clsx('flex cursor-grab items-start gap-3 p-3 transition hover:bg-white/5',
+                  className={clsx('flex cursor-grab items-start gap-3 p-3 transition hover:bg-deck-600',
                     dragIndex === i && 'opacity-40')}>
-                  <div className="w-7 shrink-0 pt-1 text-center font-mono text-sm font-bold text-slate-600">
+                  <div className="w-7 shrink-0 pt-1 text-center font-mono text-sm font-bold text-chalk-faint">
                     {i + 1}
                   </div>
                   <div className="w-32 shrink-0 pt-0.5">
-                    <div className="font-mono text-lg font-bold text-peninsula-300">{entry.teamNumber}</div>
+                    <div className="font-mono text-lg font-bold text-chalk">{entry.teamNumber}</div>
                     {teamInfo(event, entry.teamNumber)?.nickname && (
-                      <div className="truncate text-[11px] text-slate-500">
+                      <div className="truncate text-[11px] text-chalk-dim">
                         {teamInfo(event, entry.teamNumber)!.nickname}
                       </div>
                     )}
@@ -119,7 +119,7 @@ export default function PicklistView() {
                           <div className={clsx('text-sm font-bold tabular-nums', percentileColor(p))}>
                             {m.format === 'percent' ? `${Math.round(value * 100)}%` : value.toFixed(1)}
                           </div>
-                          <div className="text-[9px] uppercase text-slate-600">{m.label}</div>
+                          <div className="text-[10px] text-chalk-faint">{m.label}</div>
                         </div>
                       )
                     })}
@@ -132,7 +132,7 @@ export default function PicklistView() {
                           onClick={() => update(entry.teamNumber, { tier: entry.tier === t ? '' : t })}
                           className={clsx('rounded border px-2 py-0.5 text-[10px] font-semibold transition',
                             entry.tier === t ? TIER_STYLES[t]
-                              : 'border-white/10 text-slate-600 hover:bg-white/5')}>
+                              : 'border-deck-500 text-chalk-faint hover:bg-deck-600')}>
                           {t}
                         </button>
                       ))}
@@ -143,7 +143,7 @@ export default function PicklistView() {
                   </div>
 
                   <button type="button" onClick={() => remove(entry.teamNumber)}
-                    className="shrink-0 px-2 pt-1 text-slate-700 hover:text-rose-400">×</button>
+                    className="shrink-0 px-2 pt-1 text-chalk-faint hover:text-alliance-red">×</button>
                 </div>
               )
             })}
@@ -152,11 +152,11 @@ export default function PicklistView() {
       </Card>
 
       <Card className="p-0">
-        <div className="border-b border-white/10 p-4">
+        <div className="border-b border-deck-500 p-4">
           <SectionTitle>Available — {available.length}</SectionTitle>
-          <p className="text-xs text-slate-600">Sorted by {game.keyMetrics[0]?.label ?? 'team'}.</p>
+          <p className="text-xs text-chalk-faint">Sorted by {game.keyMetrics[0]?.label ?? 'team'}.</p>
         </div>
-        <div className="max-h-[70vh] divide-y divide-white/5 overflow-y-auto">
+        <div className="max-h-[70vh] divide-y divide-deck-600 overflow-y-auto">
           {available
             .sort((a, b) => {
               // Un-scouted teams sink to the bottom rather than ranking as
@@ -173,14 +173,14 @@ export default function PicklistView() {
               const hasData = s.matchesPlayed > 0
               return (
                 <button key={s.teamNumber} type="button" onClick={() => add(s.teamNumber)}
-                  className={clsx('flex w-full items-center gap-3 p-2.5 text-left transition hover:bg-white/5',
+                  className={clsx('flex w-full items-center gap-3 p-2.5 text-left transition hover:bg-deck-600',
                     !hasData && 'opacity-50')}>
-                  <span className="w-14 shrink-0 font-mono text-sm font-bold text-slate-300">{s.teamNumber}</span>
+                  <span className="w-14 shrink-0 font-mono text-sm font-bold text-chalk">{s.teamNumber}</span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs text-slate-400">
+                    <span className="block truncate text-xs text-chalk-dim">
                       {teamInfo(event, s.teamNumber)?.nickname ?? ''}
                     </span>
-                    <span className="block text-[10px] text-slate-600">
+                    <span className="block text-[10px] text-chalk-faint">
                       {hasData ? `${s.matchesPlayed} matches` : 'no data'}
                     </span>
                   </span>
@@ -191,9 +191,9 @@ export default function PicklistView() {
                       {(s.metrics[game.keyMetrics[0]?.id]?.mean ?? 0).toFixed(1)}
                     </span>
                   ) : (
-                    <span className="text-sm text-slate-700">—</span>
+                    <span className="text-sm text-chalk-faint">—</span>
                   )}
-                  <span className="text-slate-700">+</span>
+                  <span className="text-chalk-faint">+</span>
                 </button>
               )
             })}

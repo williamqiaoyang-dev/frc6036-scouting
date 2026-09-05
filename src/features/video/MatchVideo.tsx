@@ -17,9 +17,9 @@ export function MatchVideo({ match, label }: { match: CachedMatch; label?: strin
 
   if (!video) {
     return (
-      <div className="rounded-xl border border-dashed border-white/10 p-6 text-center">
-        <p className="text-sm text-slate-500">No video posted yet</p>
-        <p className="mt-1 text-xs text-slate-600">
+      <div className="rounded-panel border border-dashed border-deck-500 p-6 text-center">
+        <p className="text-sm text-chalk-dim">No video posted yet</p>
+        <p className="mt-1 text-xs text-chalk-faint">
           Footage appears here once someone uploads it to The Blue Alliance.
         </p>
       </div>
@@ -33,7 +33,7 @@ export function MatchVideo({ match, label }: { match: CachedMatch; label?: strin
   if (!embed) {
     return (
       <a href={watch} target="_blank" rel="noreferrer"
-        className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-surface-1/60 p-6 text-sm font-semibold text-peninsula-300 hover:bg-white/5">
+        className="flex items-center justify-center gap-2 rounded-panel border border-deck-500 bg-deck-800 p-6 text-sm font-semibold text-chalk hover:bg-deck-600">
         Watch on The Blue Alliance ↗
       </a>
     )
@@ -42,7 +42,7 @@ export function MatchVideo({ match, label }: { match: CachedMatch; label?: strin
   const id = video.key.split('?')[0]
 
   return (
-    <div className="overflow-hidden rounded-xl border border-white/10 bg-black">
+    <div className="overflow-hidden rounded-panel border border-deck-500 bg-black">
       <div className="relative aspect-video">
         {playing ? (
           <iframe
@@ -62,7 +62,7 @@ export function MatchVideo({ match, label }: { match: CachedMatch; label?: strin
               className="h-full w-full object-cover opacity-70 transition group-hover:opacity-90"
             />
             <span className="absolute inset-0 flex items-center justify-center">
-              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/70 text-xl text-white ring-2 ring-white/30 transition group-hover:scale-110 group-hover:bg-peninsula-600">
+              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/70 text-xl text-white ring-2 ring-white/30 transition group-hover:scale-110 group-hover:bg-signal/15">
                 ▶
               </span>
             </span>
@@ -71,14 +71,14 @@ export function MatchVideo({ match, label }: { match: CachedMatch; label?: strin
       </div>
 
       <div className="flex items-center justify-between gap-3 px-3 py-2">
-        <span className="truncate text-xs text-slate-500">
+        <span className="truncate text-xs text-chalk-dim">
           {label ?? `Match ${match.matchNumber}`}
           {match.videos.length > 1 && (
-            <span className="ml-2 text-slate-600">+{match.videos.length - 1} more</span>
+            <span className="ml-2 text-chalk-faint">+{match.videos.length - 1} more</span>
           )}
         </span>
         <a href={watch} target="_blank" rel="noreferrer"
-          className="shrink-0 text-xs text-slate-600 hover:text-peninsula-300">
+          className="shrink-0 text-xs text-chalk-faint hover:text-chalk">
           YouTube ↗
         </a>
       </div>

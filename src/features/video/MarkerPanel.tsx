@@ -68,14 +68,14 @@ export function MarkerPanel({
           + Mark this moment
         </button>
       }>
-        Markers {markers.length > 0 && <span className="text-slate-600">({markers.length})</span>}
+        Markers {markers.length > 0 && <span className="text-chalk-faint">({markers.length})</span>}
       </SectionTitle>
 
       {draft && (
-        <div className="mb-3 rounded-lg border border-peninsula-500/40 bg-peninsula-600/10 p-3">
+        <div className="mb-3 rounded-panel border border-signal/40 bg-signal/10 p-3">
           <div className="mb-2 flex items-center gap-2">
-            <span className="font-mono text-sm font-bold text-peninsula-300">{formatTime(draft.t)}</span>
-            <span className="text-xs text-slate-500">video paused</span>
+            <span className="font-mono text-sm font-bold text-chalk">{formatTime(draft.t)}</span>
+            <span className="text-xs text-chalk-dim">video paused</span>
           </div>
 
           <div className="mb-2 flex flex-wrap gap-1">
@@ -83,22 +83,22 @@ export function MarkerPanel({
               <button key={t.id} type="button" onClick={() => setDraft({ ...draft, tag: t.id })}
                 className={clsx('rounded border px-2.5 py-1 text-xs font-semibold transition',
                   draft.tag === t.id
-                    ? 'border-peninsula-400 bg-peninsula-600 text-white'
-                    : 'border-white/10 text-slate-400 hover:bg-white/5')}>
+                    ? 'border-signal bg-signal/15 text-white'
+                    : 'border-deck-500 text-chalk-dim hover:bg-deck-600')}>
                 {t.label}
               </button>
             ))}
           </div>
 
           <div className="mb-2 flex flex-wrap items-center gap-1">
-            <span className="mr-1 text-[11px] text-slate-500">Robot:</span>
+            <span className="mr-1 text-[11px] text-chalk-dim">Robot:</span>
             {allTeams.map((t) => (
               <button key={t} type="button"
                 onClick={() => setDraft({ ...draft, team: draft.team === t ? null : t })}
                 className={clsx('rounded border px-2 py-0.5 font-mono text-xs transition',
-                  draft.team === t ? 'border-peninsula-400 bg-peninsula-600 text-white'
-                    : match.red.includes(t) ? 'border-rose-500/30 text-rose-300 hover:bg-white/5'
-                    : 'border-sky-500/30 text-sky-300 hover:bg-white/5')}>
+                  draft.team === t ? 'border-signal bg-signal/15 text-white'
+                    : match.red.includes(t) ? 'border-alliance-red/40 text-alliance-red hover:bg-deck-600'
+                    : 'border-alliance-blue/40 text-alliance-blue hover:bg-deck-600')}>
                 {t}
               </button>
             ))}
@@ -120,7 +120,7 @@ export function MarkerPanel({
             <button type="button" onClick={() => setDraft(null)} className="btn-ghost h-8 py-0 text-xs">
               Cancel
             </button>
-            <span className="self-center text-[11px] text-slate-600">⌘↵ to save · esc to cancel</span>
+            <span className="self-center text-[11px] text-chalk-faint">⌘↵ to save · esc to cancel</span>
           </div>
         </div>
       )}
@@ -131,29 +131,29 @@ export function MarkerPanel({
       ) : (
         <div className="space-y-1">
           {sorted.map((m) => (
-            <div key={m.id} className="group flex items-start gap-2 rounded-lg border border-white/5 p-2 hover:bg-white/5">
+            <div key={m.id} className="group flex items-start gap-2 rounded-panel border border-deck-600 p-2 hover:bg-deck-600">
               <button type="button" onClick={() => player?.seekTo(m.t)}
-                className="shrink-0 font-mono text-xs font-bold text-peninsula-300 hover:underline">
+                className="shrink-0 font-mono text-xs font-bold text-chalk hover:underline">
                 {formatTime(m.t)}
               </button>
               <span className={clsx('mt-1 h-2 w-2 shrink-0 rounded-full', MARKER_COLORS[m.tag] ?? 'bg-slate-400')} />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-xs font-semibold text-slate-300">
+                  <span className="text-xs font-semibold text-chalk">
                     {MARKER_TAGS.find((t) => t.id === m.tag)?.label ?? m.tag}
                   </span>
                   {m.teamNumber && (
                     <span className={clsx('rounded px-1.5 font-mono text-[11px]',
-                      match.red.includes(m.teamNumber) ? 'bg-rose-500/15 text-rose-300' : 'bg-sky-500/15 text-sky-300')}>
+                      match.red.includes(m.teamNumber) ? 'bg-alliance-red/15 text-alliance-red' : 'bg-alliance-blue/15 text-alliance-blue')}>
                       {m.teamNumber}
                     </span>
                   )}
-                  <span className="text-[11px] text-slate-600">{m.author}</span>
+                  <span className="text-[11px] text-chalk-faint">{m.author}</span>
                 </div>
-                {m.note && <p className="mt-0.5 text-xs text-slate-400">{m.note}</p>}
+                {m.note && <p className="mt-0.5 text-xs text-chalk-dim">{m.note}</p>}
               </div>
               <button type="button" onClick={() => remove(m.id)}
-                className="shrink-0 px-1 text-slate-700 opacity-0 transition group-hover:opacity-100 hover:text-rose-400">
+                className="shrink-0 px-1 text-chalk-faint opacity-0 transition group-hover:opacity-100 hover:text-alliance-red">
                 ×
               </button>
             </div>

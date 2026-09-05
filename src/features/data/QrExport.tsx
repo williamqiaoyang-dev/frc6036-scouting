@@ -39,17 +39,17 @@ export function QrExport({ bundle }: { bundle: TransferBundle }) {
   }, [index, chunks])
 
   if (!chunks.length) {
-    return <p className="py-8 text-center text-sm text-slate-600">Packing data…</p>
+    return <p className="py-8 text-center text-sm text-chalk-faint">Packing data…</p>
   }
 
   return (
     <div className="flex flex-col items-center gap-3">
-      <div className="rounded-xl bg-white p-3">
+      <div className="rounded-panel bg-white p-3">
         <canvas ref={canvasRef} />
       </div>
 
       <div className="flex items-center gap-3 text-sm">
-        <span className="font-mono tabular-nums text-slate-400">
+        <span className="font-mono tabular-nums text-chalk-dim">
           {index + 1} / {chunks.length}
         </span>
         {chunks.length > 1 && (
@@ -67,7 +67,7 @@ export function QrExport({ bundle }: { bundle: TransferBundle }) {
         )}
       </div>
 
-      <p className="max-w-sm text-center text-xs text-slate-600">
+      <p className="max-w-sm text-center text-xs text-chalk-faint">
         {chunks.length > 1
           ? `This export is split across ${chunks.length} codes. Let it loop at least once while the other device scans.`
           : 'Hold this up to the scanning device.'}
