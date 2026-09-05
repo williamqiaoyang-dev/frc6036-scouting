@@ -7,6 +7,12 @@ super-scouting, and an analysis layer that turns it into a picklist.
 Configured for **2026 REBUILT**, with the game rules isolated in a single pluggable file
 so next season is a drop-in, not a rewrite.
 
+### ▶ Live: <https://williamqiaoyang-dev.github.io/frc6036-scouting/>
+
+Open it on any laptop or phone — nothing to install. Add a Blue Alliance key and an
+event key in **Settings** and it's ready to scout. All data stays in that browser
+until you export it, so anyone can open the link without touching your team's data.
+
 ---
 
 ## Quick start
