@@ -1,6 +1,8 @@
 import { db } from './db'
 import { getConfig } from './config'
-import type { CachedEvent, CachedMatch, CachedRanking, CachedTeam, MatchVideo } from './schema'
+import type {
+  CachedEvent, CachedMatch, CachedRanking, CachedTeam, EventDirectoryEntry, MatchVideo,
+} from './schema'
 
 /**
  * The Blue Alliance Read API v3.
@@ -255,6 +257,89 @@ export async function getCachedEvent(eventKey: string): Promise<CachedEvent | nu
 /** Every event cached locally, newest fetch first. */
 export async function listCachedEvents(): Promise<CachedEvent[]> {
   return db.events.orderBy('fetchedAt').reverse().toArray()
+}
+
+/**
+ * The whole season's event list, cached so it can be searched by name.
+ *
+ * Nobody remembers that Silicon Valley is "casj". Scouts know their
+ * competition by its name, so that is what they should be able to type.
+ * ~320 events a season, about 120 KB — small enough to hold offline.
+ */
+export async function fetchEventDirectory(year: number): Promise<EventDirectoryEntry[]> {
+  const raw = await tbaFetch<any[]>(`/events/${year}/simple`)
+  const entries: EventDirectoryEntry[] = raw.map((e) => ({
+    key: e.key,
+    name: e.name,
+    city: e.city ?? '',
+    stateProv: e.state_prov ?? '',
+    country: e.country ?? '',
+    startDate: e.start_date ?? '',
+    endDate: e.end_date ?? '',
+    year: e.year ?? year,
+    eventType: e.event_type ?? 0,
+  }))
+
+  await db.transaction('rw', db.eventDirectory, async () => {
+    await db.eventDirectory.where('year').equals(year).delete()
+    await db.eventDirectory.bulkPut(entries)
+  })
+  localStorage.setItem(`event_dir_fetched_${year}`, String(Date.now()))
+  return entries
+}
+
+/** The cached directory for a season, or an empty list if never fetched. */
+export async function getEventDirectory(year: number): Promise<EventDirectoryEntry[]> {
+  return db.eventDirectory.where('year').equals(year).toArray()
+}
+
+export function eventDirectoryAge(year: number): number | null {
+  const at = localStorage.getItem(`event_dir_fetched_${year}`)
+  return at ? Date.now() - Number(at) : null
+}
+
+/**
+ * Rank events against a typed query. Matches on name, city and key, so
+ * "silicon", "san jose" and "casj" all find the same event, and prefers
+ * events whose name starts with the query.
+ */
+export function searchEvents(
+  entries: EventDirectoryEntry[],
+  query: string,
+  limit = 12,
+): EventDirectoryEntry[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return []
+
+  const scored = entries
+    .map((e) => {
+      const name = e.name.toLowerCase()
+      const place = `${e.city} ${e.stateProv}`.toLowerCase()
+      let score = -1
+      if (e.key.toLowerCase() === q) score = 100
+      else if (name.startsWith(q)) score = 80
+      else if (name.includes(q)) score = 60
+      else if (place.startsWith(q)) score = 45
+      else if (place.includes(q)) score = 35
+      else if (e.key.toLowerCase().includes(q)) score = 25
+      // A championship division is rarely what a scout is looking for.
+      if (e.eventType >= 3) score -= 10
+      return { e, score }
+    })
+    .filter((x) => x.score > 0)
+
+  scored.sort((a, b) =>
+    b.score - a.score || a.e.startDate.localeCompare(b.e.startDate))
+  return scored.slice(0, limit).map((x) => x.e)
+}
+
+/** Human label for TBA's event_type. */
+export function eventTypeLabel(t: number): string {
+  if (t === 0) return 'Regional'
+  if (t === 1) return 'District'
+  if (t === 2) return 'District championship'
+  if (t === 3 || t === 4) return 'Championship'
+  return 'Offseason'
 }
 
 /** Events a team is registered for in a given year — used by the event picker. */

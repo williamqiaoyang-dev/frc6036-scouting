@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 import type {
   MatchRecord, PitRecord, SuperRecord, Picklist, CachedEvent, MarkerRecord,
+  EventDirectoryEntry,
 } from './schema'
 
 /**
@@ -15,6 +16,7 @@ class ScoutingDB extends Dexie {
   picklists!: Table<Picklist, string>
   events!: Table<CachedEvent, string>
   markers!: Table<MarkerRecord, string>
+  eventDirectory!: Table<EventDirectoryEntry, string>
 
   constructor() {
     super('orbit6036-scouting')
@@ -35,6 +37,18 @@ class ScoutingDB extends Dexie {
       picklists: 'id, eventKey, updatedAt',
       events: 'eventKey, fetchedAt',
       markers: 'id, eventKey, matchKey, teamNumber, synced, updatedAt',
+    })
+
+    // v3 adds the season event directory, so events can be found by name
+    // and the list still works once the venue wifi dies.
+    this.version(3).stores({
+      matches: 'id, eventKey, teamNumber, matchNumber, synced, updatedAt',
+      pits: 'id, eventKey, teamNumber, synced, updatedAt',
+      supers: 'id, eventKey, matchNumber, synced, updatedAt',
+      picklists: 'id, eventKey, updatedAt',
+      events: 'eventKey, fetchedAt',
+      markers: 'id, eventKey, matchKey, teamNumber, synced, updatedAt',
+      eventDirectory: 'key, year, name',
     })
   }
 }

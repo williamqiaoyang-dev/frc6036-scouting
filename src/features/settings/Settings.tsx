@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import clsx from 'clsx'
 import { GAMES } from '@/games'
 import { getConfig } from '@/lib/config'
 import { db } from '@/lib/db'
@@ -6,6 +7,7 @@ import { fetchEvent, fetchTeamEvents, getTbaKey, listCachedEvents, setTbaKey } f
 import type { CachedEvent } from '@/lib/schema'
 import { loadSettings, saveSettings } from '@/lib/settings'
 import { Card, Field, SectionTitle, Toast } from '@/components/ui'
+import { EventPicker } from './EventPicker'
 
 
 
@@ -13,6 +15,8 @@ export default function Settings() {
   const config = getConfig()
   const TEAM = config.team
   const [settings, setLocal] = useState(loadSettings)
+  // Search the season the active game belongs to, not today's calendar year.
+  const seasonYear = GAMES[settings.gameId]?.year ?? new Date().getFullYear()
   const [key, setKey] = useState(getTbaKey())
   const [cached, setCached] = useState<CachedEvent[]>([])
   const [teamEvents, setTeamEvents] = useState<{ key: string; name: string; start: string }[]>([])
@@ -42,11 +46,14 @@ export default function Settings() {
 
   async function syncEvent(eventKey: string) {
     if (!eventKey) return
+    // Commit the choice before the network call. Picking an event should
+    // stick even if the sync then fails — offline, or no key yet — so the
+    // scout can retry rather than having to find the event again.
+    set('eventKey', eventKey)
     setBusy(eventKey)
     setProgress('Starting…')
     try {
       const event = await fetchEvent(eventKey, setProgress)
-      set('eventKey', eventKey)
       const photos = event.teamInfo.filter((t) => t.robotPhotoUrl).length
       flash(
         `Cached ${event.name}: ${event.teams.length} teams, ${event.matches.length} matches, ` +
@@ -134,38 +141,50 @@ export default function Settings() {
 
       <Card>
         <SectionTitle>Active event</SectionTitle>
-        <Field label="Event key" hint="e.g. 2026cabe. Sync pulls the team list and schedule for offline use.">
-          <div className="flex gap-2">
-            <input className="input font-mono" value={settings.eventKey} placeholder="2026cabe"
-              onChange={(e) => set('eventKey', e.target.value.trim().toLowerCase())} />
-            <button type="button" onClick={() => syncEvent(settings.eventKey)}
-              disabled={!settings.eventKey || !!busy} className="btn-primary shrink-0">
-              {busy === settings.eventKey ? 'Syncing…' : 'Sync'}
-            </button>
-          </div>
-        </Field>
+
+        <EventPicker
+          year={seasonYear}
+          selectedKey={settings.eventKey}
+          disabled={!!busy}
+          onPick={(entry) => syncEvent(entry.key)}
+        />
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => syncEvent(settings.eventKey)}
+            disabled={!settings.eventKey || !!busy} className="btn-primary">
+            {busy && busy === settings.eventKey ? 'Syncing…' : 'Re-sync this event'}
+          </button>
+          <span className="text-[12px] text-chalk-faint">
+            Pulls the roster, schedule, results, videos and robot photos for offline use.
+          </span>
+        </div>
 
         {progress && (
-          <p className="mt-2 text-xs text-chalk">
-            {progress} <span className="text-chalk-faint">— robot photos are one request per team, so this takes a moment.</span>
+          <p className="mt-2 text-[12px] text-signal">
+            {progress}
+            <span className="ml-1 text-chalk-faint">
+              Robot photos are one request per team, so this takes a moment.
+            </span>
           </p>
         )}
 
         {cached.length > 0 && (
           <div className="mt-4">
-            <div className="label mb-2">Cached offline</div>
+            <div className="label mb-1.5">Saved on this device</div>
             <div className="space-y-1">
               {cached.map((e) => (
                 <button key={e.eventKey} type="button" onClick={() => set('eventKey', e.eventKey)}
-                  className={`flex w-full items-center gap-3 rounded-panel border p-2.5 text-left transition ${
+                  className={clsx(
+                    'flex w-full items-baseline gap-3 rounded-panel border p-2 text-left transition',
                     e.eventKey === settings.eventKey
                       ? 'border-signal/50 bg-signal/10'
-                      : 'border-deck-500 hover:bg-deck-600'}`}>
-                  <span className="font-mono text-xs text-chalk">{e.eventKey}</span>
-                  <span className="flex-1 truncate text-sm text-chalk">{e.name}</span>
-                  <span className="text-xs text-chalk-faint">
-                    {e.teams.length} teams · {e.matches.length} matches
+                      : 'border-deck-500 hover:bg-deck-600',
+                  )}>
+                  <span className="min-w-0 flex-1 truncate text-[14px] text-chalk">{e.name}</span>
+                  <span className="shrink-0 text-[12px] text-chalk-faint">
+                    {e.teams.length} teams, {e.matches.length} matches
                   </span>
+                  <span className="shrink-0 text-[12px] text-chalk-faint">{e.eventKey}</span>
                 </button>
               ))}
             </div>

@@ -68,10 +68,22 @@ Or configure a single device by hand — open **Settings** and:
 
 1. Paste a **Blue Alliance read API key** (get one at
    [thebluealliance.com/account](https://www.thebluealliance.com/account)).
-2. Enter your **event key** (e.g. `2026casj`) and press **Sync**. This caches the team
-   list and match schedule so everything works with the wifi off.
+2. Find your competition by name under **Active event** and pick it. This caches the
+   roster, schedule, results, videos and robot photos so everything works with the
+   wifi off.
 3. Set the **scout name**, **device name**, and optionally the assigned alliance/station
    so the match form pre-fills itself.
+
+### Finding your competition
+
+Under **Active event**, type the competition's name — "Silicon Valley", "Chezy
+Champs", "Rocket City" — and pick it from the list. Searching also matches the
+host city and the TBA code, so `san jose` and `2026cc` both work if that is what
+you have in front of you.
+
+Nobody memorises that Silicon Valley is `casj`. The whole season's event list
+(~320 events) is cached on the device the first time it loads, so the search
+keeps working once the venue wifi dies.
 
 ---
 

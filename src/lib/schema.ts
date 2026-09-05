@@ -135,6 +135,23 @@ export interface CachedMatch {
   blueRp: number | null
 }
 
+/**
+ * One row of the event directory — every event in a season, so a scout can
+ * find their competition by name instead of memorising a TBA event code.
+ */
+export interface EventDirectoryEntry {
+  key: string
+  name: string
+  city: string
+  stateProv: string
+  country: string
+  startDate: string
+  endDate: string
+  year: number
+  /** TBA event_type: 0 regional, 1 district, 2 district champs, 3+ champs/offseason. */
+  eventType: number
+}
+
 /** Team identity and robot photo, from TBA. */
 export interface CachedTeam {
   teamNumber: number
