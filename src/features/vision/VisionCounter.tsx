@@ -1,54 +1,85 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
-import type { VisionMode } from '@/lib/ballTracker'
-import type { VisionConfig } from '@/lib/vision'
+import type { Detector, DetectorEvent } from '@/lib/detectors'
 import { Panel } from '@/components/ui'
-import { useBallVision } from './useBallVision'
-import { VisionTuning } from './VisionTuning'
-import { drawVisionOverlay } from './overlay'
 import { Trim } from '@/features/match/Counter'
+import { DetectorList, detectorColor } from './DetectorList'
+import { DetectorTuning } from './DetectorTuning'
+import { drawDetectorOverlay, type Point } from './overlay'
+import { useDetectors } from './useDetectors'
 
-type Tool = 'none' | 'zone' | 'sample' | 'floor'
+export type CameraMode = 'manual' | 'static' | 'dynamic'
 
 /**
- * Camera-assisted FUEL counting.
+ * Camera-assisted scouting during a live match.
  *
- * The scout points a phone or laptop camera at the goal, marks where the goal
- * is, taps a ball to teach the app its colour, and the app counts shots going
- * in. Manual counting stays available and is always the fallback — the mode
- * switch is deliberately never hidden, because a scout who does not trust
- * what the camera is doing must be able to take over instantly.
+ * The FUEL count is the headline because it is the number a scout is
+ * hammering all match, but the same camera feeds every other detector the
+ * game defines — leaving the start zone, intakes, a robot that stops
+ * moving. Manual counting stays available and the mode switch is never
+ * hidden: a scout who does not trust what the camera is doing has to be
+ * able to take over instantly.
+ *
+ * "AI static" and "AI dynamic" set how the FUEL detector decides a ball
+ * scored — the moment it arrives in the goal, or only when it arrives and
+ * vanishes. Static suits a tripod pointed at the hub; dynamic is the honest
+ * one for a phone held in the stands.
  */
 export function VisionCounter({
-  mode, onModeChange, config, onConfigChange, onScore, counted, onManualAdjust, step = 1, label,
+  mode, onModeChange, detectors, onDetectorsChange, onEvent,
+  counted, onManualAdjust, step = 1, label, fuelDetectorId = 'fuel_scored',
 }: {
-  mode: VisionMode
-  onModeChange: (m: VisionMode) => void
-  config: VisionConfig
-  onConfigChange: (c: VisionConfig) => void
-  onScore: () => void
+  mode: CameraMode
+  onModeChange: (m: CameraMode) => void
+  detectors: Detector[]
+  onDetectorsChange: (next: Detector[]) => void
+  onEvent: (e: DetectorEvent) => void
   counted: number
   onManualAdjust: (delta: number) => void
-  /** Units per manual tap. The camera always counts one ball at a time. */
   step?: number
   label: string
+  fuelDetectorId?: string
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
+
   const [video, setVideo] = useState<HTMLVideoElement | null>(null)
+  const [track, setTrack] = useState<MediaStreamTrack | null>(null)
   const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState('')
-  const [tool, setTool] = useState<Tool>('none')
-  const [draft, setDraft] = useState<{ x: number; y: number }[]>([])
-  const [lastHit, setLastHit] = useState(0)
   const [missedSec, setMissedSec] = useState(0)
+  const [lastHit, setLastHit] = useState(0)
+  const [counts, setCounts] = useState<Record<string, number>>({})
+
+  const [drawing, setDrawing] = useState<string | null>(null)
+  const [sampling, setSampling] = useState<string | null>(null)
+  const [draft, setDraft] = useState<Point[]>([])
+  const [tuned, setTuned] = useState(fuelDetectorId)
 
   const active = mode !== 'manual'
+  const armed = detectors.filter((d) => d.enabled && d.zone.length >= 3)
 
-  const { detections, fps, sampleAt, reset, procWidth } = useBallVision({
-    video, mode, config, enabled: streaming && active,
-    onScore: () => { setLastHit(Date.now()); onScore() },
-  })
+  const { detections, fps, sampleAt, reset, processFrame, procWidth, procHeight } =
+    useDetectors({
+      video, detectors,
+      liveLoop: streaming && active,
+      track,
+      onEvent: (e) => {
+        setLastHit(Date.now())
+        setCounts((c) => ({ ...c, [e.detectorId]: (c[e.detectorId] ?? 0) + 1 }))
+        onEvent(e)
+      },
+    })
+
+  // The mode buttons choose how the FUEL detector decides a ball scored.
+  useEffect(() => {
+    if (mode === 'manual') return
+    const rule = mode === 'static' ? 'enter' : 'vanish-in'
+    const fuel = detectors.find((d) => d.id === fuelDetectorId)
+    if (fuel && fuel.rule !== rule) {
+      onDetectorsChange(detectors.map((d) => d.id === fuelDetectorId ? { ...d, rule } : d))
+    }
+  }, [mode, detectors, fuelDetectorId])
 
   // ---- camera ------------------------------------------------------------
   useEffect(() => {
@@ -66,6 +97,7 @@ export function VisionCounter({
         videoRef.current.srcObject = s
         videoRef.current.play().then(() => {
           setVideo(videoRef.current)
+          setTrack(s.getVideoTracks()[0] ?? null)
           setStreaming(true)
         }).catch(() => setError('The camera stream would not start.'))
       }
@@ -75,13 +107,14 @@ export function VisionCounter({
       cancelled = true
       setStreaming(false)
       setVideo(null)
+      setTrack(null)
       stream?.getTracks().forEach((t) => t.stop())
     }
   }, [active])
 
-  // A backgrounded tab is presented no frames, so the camera counts nothing
-  // while the scout is looking at something else. Losing counts silently
-  // would be worse than losing them, so say how long was missed.
+  // A backgrounded tab is presented no frames, and a camera has no track to
+  // rewind — so counting simply stops. Losing counts silently would be
+  // worse than losing them, so say how long was missed.
   useEffect(() => {
     if (!active || !streaming) return
     let hiddenAt = 0
@@ -100,75 +133,72 @@ export function VisionCounter({
   // ---- overlay -----------------------------------------------------------
   useEffect(() => {
     const canvas = overlayRef.current
-    const v = videoRef.current
-    if (!canvas || !v || !v.videoWidth) return
-    drawVisionOverlay(canvas, {
-      config, draft, detections,
-      procWidth,
-      procHeight: Math.round(procWidth * (v.videoHeight / v.videoWidth)),
+    if (!canvas) return
+    drawDetectorOverlay(canvas, {
+      detectors, colorOf: (id) => detectorColor(detectors, id),
+      seen: detections, draft, drawingId: drawing, procWidth, procHeight,
     })
-  }, [detections, config.zone, config.groundY, draft])
-
-  function toNorm(e: React.MouseEvent<HTMLCanvasElement>) {
-    const r = e.currentTarget.getBoundingClientRect()
-    return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }
-  }
+  }, [detections, detectors, draft, drawing, procWidth, procHeight])
 
   function onCanvasClick(e: React.MouseEvent<HTMLCanvasElement>) {
-    const p = toNorm(e)
-    if (tool === 'zone') {
-      setDraft((d) => [...d, p])
-    } else if (tool === 'floor') {
-      onConfigChange({ ...config, groundY: Math.min(0.99, Math.max(0.05, p.y)) })
-      setTool('none')
-    } else if (tool === 'sample') {
+    const r = e.currentTarget.getBoundingClientRect()
+    const p = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }
+
+    if (drawing) { setDraft((d) => [...d, p]); return }
+    if (sampling) {
       const s = sampleAt(p.x, p.y)
       if (s && s.value > 0.08) {
-        onConfigChange({
-          ...config,
-          hue: Math.round(s.hue),
-          minSaturation: Math.max(0.15, s.saturation * 0.55),
-          minValue: Math.max(0.12, s.value * 0.45),
-        })
-        setTool('none')
-      } else {
-        setError('That spot is too dark to sample. Try a lit part of the ball.')
-      }
+        onDetectorsChange(detectors.map((d) => d.id === sampling ? {
+          ...d,
+          appearance: {
+            ...d.appearance,
+            hue: Math.round(s.hue),
+            minSaturation: Math.max(0.15, s.saturation * 0.55),
+            minValue: Math.max(0.12, s.value * 0.45),
+          },
+        } : d))
+        setSampling(null)
+      } else setError('That spot is too dark to sample. Try a lit part of it.')
     }
   }
 
   function finishZone() {
-    if (draft.length >= 3) onConfigChange({ ...config, zone: draft })
+    if (drawing && draft.length >= 3) {
+      onDetectorsChange(detectors.map((d) =>
+        d.id === drawing ? { ...d, zone: draft, enabled: true } : d))
+    }
     setDraft([])
-    setTool('none')
+    setDrawing(null)
     reset()
   }
 
+  useEffect(() => { if (sampling) processFrame() }, [sampling, processFrame])
+
   const hitRecently = Date.now() - lastHit < 350
-  const zoneReady = config.zone.length >= 3
+  const modes: [CameraMode, string, string][] = [
+    ['manual', 'Manual count', 'Tap it yourself.'],
+    ['static', 'AI static', 'Counts the moment a ball reaches the goal. For a fixed camera.'],
+    ['dynamic', 'AI dynamic', 'Counts when a ball reaches the goal and vanishes into it.'],
+  ]
 
   return (
     <Panel
       title="FUEL counter"
       right={<span className="text-[12px] text-chalk-faint">
-        {active ? (streaming ? `${fps} fps · ${detections.length} seen` : 'starting camera…') : 'camera off'}
+        {active
+          ? streaming ? `${fps} fps · ${armed.length} detector${armed.length === 1 ? '' : 's'} armed` : 'starting camera…'
+          : 'camera off'}
       </span>}
     >
       {/* ---- mode ------------------------------------------------------- */}
       <div className="mb-3 flex gap-px">
-        {([
-          ['manual', 'Manual count', 'You tap. Always works.'],
-          ['static', 'AI static', 'Camera fixed on the goal. Counts on entry.'],
-          ['dynamic', 'AI dynamic', 'Handheld. Counts a tracked shot going in.'],
-        ] as [VisionMode, string, string][]).map(([id, label, hint]) => (
+        {modes.map(([id, text, hint]) => (
           <button key={id} type="button" onClick={() => onModeChange(id)} title={hint}
             className={clsx(
               'flex-1 rounded-panel border px-2 py-1.5 font-display text-[15px] font-600 transition',
-              mode === id
-                ? 'border-signal bg-signal/15 text-signal'
-                : 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk',
-            )}>
-            {label}
+              mode === id ? 'border-signal bg-signal/15 text-signal'
+                : 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk')}>
+            {text}
           </button>
         ))}
       </div>
@@ -183,8 +213,7 @@ export function VisionCounter({
         </button>
         <div className={clsx(
           'flex flex-1 items-center justify-center rounded-panel border py-2 transition-colors',
-          hitRecently ? 'border-emerald-400 bg-emerald-400/20' : 'border-signal/35 bg-signal/10',
-        )}>
+          hitRecently ? 'border-emerald-400 bg-emerald-400/20' : 'border-signal/35 bg-signal/10')}>
           <span className={clsx('readout text-[40px] font-700',
             hitRecently ? 'text-emerald-300' : 'text-signal')}>{counted}</span>
         </div>
@@ -199,68 +228,71 @@ export function VisionCounter({
 
       {/* ---- camera ----------------------------------------------------- */}
       {active && (
-        <>
-          <div className="relative overflow-hidden rounded-panel border border-deck-500 bg-black">
-            <video ref={videoRef} playsInline muted className="block w-full" />
-            <canvas
-              ref={overlayRef}
-              onClick={onCanvasClick}
-              className={clsx('absolute inset-0 h-full w-full',
-                tool !== 'none' ? 'cursor-crosshair' : 'cursor-default')}
-            />
-            {tool !== 'none' && (
-              <div className="absolute inset-x-0 top-0 bg-signal px-2 py-1 text-[12px] font-600 text-deck-900">
-                {tool === 'zone' && `Click the corners of the goal, then Finish. ${draft.length} placed.`}
-                {tool === 'sample' && 'Click a FUEL ball to learn its colour.'}
-                {tool === 'floor' && 'Click where the floor starts.'}
-              </div>
-            )}
-          </div>
+        <div className="grid gap-3 xl:grid-cols-[1fr_320px]">
+          <div>
+            <div className="relative overflow-hidden rounded-panel border border-deck-500 bg-black">
+              <video ref={videoRef} playsInline muted className="block w-full" />
+              <canvas ref={overlayRef} onClick={onCanvasClick}
+                className={clsx('absolute inset-0 h-full w-full',
+                  drawing || sampling ? 'cursor-crosshair' : 'cursor-default')} />
+              {(drawing || sampling) && (
+                <div className="absolute inset-x-0 top-0 bg-signal px-2 py-1 text-[12px] font-600 text-deck-900">
+                  {drawing
+                    ? `Click the corners of the area for “${detectors.find((d) => d.id === drawing)?.label}”, then Finish. ${draft.length} placed.`
+                    : `Click the thing “${detectors.find((d) => d.id === sampling)?.label}” should look for.`}
+                </div>
+              )}
+            </div>
 
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {tool === 'zone' ? (
-              <>
-                <button type="button" onClick={finishZone} disabled={draft.length < 3}
-                  className="btn-primary h-8 py-0 text-[13px]">Finish goal area</button>
-                <button type="button" onClick={() => { setDraft([]); setTool('none') }}
-                  className="btn-ghost h-8 py-0 text-[13px]">Cancel</button>
-              </>
-            ) : (
-              <>
-                <button type="button" onClick={() => { setDraft([]); setTool('zone') }}
-                  className="btn-ghost h-8 py-0 text-[13px]">
-                  {zoneReady ? 'Redraw goal area' : 'Mark goal area'}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {drawing ? (
+                <>
+                  <button type="button" onClick={finishZone} disabled={draft.length < 3}
+                    className="btn-primary h-8 py-0 text-[13px] disabled:opacity-30">Finish area</button>
+                  <button type="button" onClick={() => { setDraft([]); setDrawing(null) }}
+                    className="btn-ghost h-8 py-0 text-[13px]">Cancel</button>
+                </>
+              ) : (
+                <button type="button" onClick={reset} className="btn-ghost h-8 py-0 text-[13px]">
+                  Reset tracking
                 </button>
-                <button type="button" onClick={() => setTool('sample')}
-                  className="btn-ghost h-8 py-0 text-[13px]">Sample ball colour</button>
-                <button type="button" onClick={() => setTool('floor')}
-                  className="btn-ghost h-8 py-0 text-[13px]">Set floor line</button>
-                <button type="button" onClick={reset}
-                  className="btn-ghost h-8 py-0 text-[13px]">Reset tracking</button>
-              </>
+              )}
+            </div>
+
+            {!armed.length && (
+              <p className="mt-2 text-[12px] leading-snug text-signal">
+                No detector has an area drawn yet. Nothing is counted until one does —
+                that is what keeps balls on the floor out of the count.
+              </p>
             )}
+            {missedSec > 0 && (
+              <p className="mt-2 flex items-center gap-2 text-[12px] leading-snug text-signal">
+                <span>
+                  This tab was in the background for {missedSec}s — the camera counted
+                  nothing during that time. Add what you saw by hand.
+                </span>
+                <button type="button" onClick={() => setMissedSec(0)}
+                  className="shrink-0 underline">dismiss</button>
+              </p>
+            )}
+            {error && <p className="mt-2 text-[12px] text-alliance-red">{error}</p>}
           </div>
 
-          {!zoneReady && (
-            <p className="mt-2 text-[12px] leading-snug text-signal">
-              Mark the goal area before counting starts. Nothing is counted until you do —
-              that is what keeps balls on the floor out of the count.
-            </p>
-          )}
-          {missedSec > 0 && (
-            <p className="mt-2 flex items-center gap-2 text-[12px] leading-snug text-signal">
-              <span>
-                This tab was in the background for {missedSec}s — the camera counted
-                nothing during that time. Add what you saw by hand.
-              </span>
-              <button type="button" onClick={() => setMissedSec(0)}
-                className="shrink-0 underline">dismiss</button>
-            </p>
-          )}
-          {error && <p className="mt-2 text-[12px] text-alliance-red">{error}</p>}
-
-          <VisionTuning config={config} onChange={onConfigChange} />
-        </>
+          <div>
+            <DetectorList
+              detectors={detectors}
+              onChange={onDetectorsChange}
+              counts={counts}
+              drawing={drawing}
+              onDraw={(id) => { setSampling(null); setDraft([]); setDrawing(id) }}
+              onSample={(id) => { setDrawing(null); setDraft([]); setSampling(id) }}
+              targetLabel={() => ''}
+            />
+            <DetectorTuning detectors={detectors} selectedId={tuned} onSelect={setTuned}
+              onChange={(next) => onDetectorsChange(
+                detectors.map((d) => d.id === next.id ? next : d))} />
+          </div>
+        </div>
       )}
 
       {mode === 'manual' && (

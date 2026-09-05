@@ -60,6 +60,26 @@ export const DEFAULT_VISION: VisionConfig = {
   minTravelPx: 18,
 }
 
+/**
+ * What a thing looks like. Split out from `VisionConfig` so the same blob
+ * finder can be pointed at more than balls: a robot bumper is the same
+ * search with a wider radius band and a *lower* roundness ceiling, since a
+ * bumper is emphatically not a circle.
+ */
+export interface Appearance {
+  hue: number
+  hueTolerance: number
+  minSaturation: number
+  minValue: number
+  minRadius: number
+  maxRadius: number
+  minCircularity: number
+  /** Upper roundness bound. 1 for balls; ~0.6 to *require* a non-round shape. */
+  maxCircularity: number
+  /** Normalised y below which pixels are ignored — the floor. */
+  groundY: number
+}
+
 export interface Detection {
   /** Centre, in processing-canvas pixels. */
   x: number
@@ -99,6 +119,11 @@ export function hueDistance(a: number, b: number): number {
  * because a large blob would blow the call stack on a real frame.
  */
 export function detectBalls(frame: ImageData, cfg: VisionConfig): Detection[] {
+  return detectBlobs(frame, { ...cfg, maxCircularity: 1 })
+}
+
+/** The general form: find blobs matching an appearance. */
+export function detectBlobs(frame: ImageData, cfg: Appearance): Detection[] {
   const { width: w, height: h, data } = frame
   const mask = new Uint8Array(w * h)
 
@@ -159,6 +184,7 @@ export function detectBalls(frame: ImageData, cfg: VisionConfig): Detection[] {
     const aspect = Math.min(bw, bh) / Math.max(bw, bh)
     const circularity = (fill / (Math.PI / 4)) * aspect
     if (circularity < cfg.minCircularity) continue
+    if (circularity > cfg.maxCircularity) continue
 
     out.push({
       x: sumX / count,

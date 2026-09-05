@@ -69,3 +69,29 @@ export function saveVisionConfig(config: unknown) {
     localStorage.setItem('vision_config', JSON.stringify(config))
   } catch { /* private mode or quota; tuning simply will not persist */ }
 }
+
+/**
+ * Detector setup is per-device: the zones depend on where this camera is
+ * pointed, so they cannot be shared between scouts. Stored per game so a
+ * new season starts from its own presets rather than last year's polygons.
+ */
+export function loadDetectors<T extends { id: string }>(gameId: string, presets: T[]): T[] {
+  try {
+    const raw = localStorage.getItem(`detectors_${gameId}`)
+    if (!raw) return presets
+    const saved = JSON.parse(raw) as T[]
+    const byId = new Map(saved.map((d) => [d.id, d]))
+    // Presets are the source of truth for which detectors exist; storage
+    // only supplies what the scout changed. A detector added in a new build
+    // therefore appears, and one removed from the game config disappears.
+    return presets.map((p) => ({ ...p, ...(byId.get(p.id) ?? {}) }))
+  } catch {
+    return presets
+  }
+}
+
+export function saveDetectors(gameId: string, detectors: unknown) {
+  try {
+    localStorage.setItem(`detectors_${gameId}`, JSON.stringify(detectors))
+  } catch { /* private mode or quota; setup simply will not persist */ }
+}

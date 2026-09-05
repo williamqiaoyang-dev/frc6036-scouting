@@ -11,7 +11,7 @@
     "typecheck": "tsc -b --noEmit",
     "deploy": "npm run build && node scripts/deploy.mjs",
     "set-key": "node scripts/set-key.mjs",
-    "test": "tsx src/lib/__tests__/vision.test.mts"
+    "test": "tsx src/lib/__tests__/vision.test.mts && tsx src/lib/__tests__/detectors.test.mts"
   },
   "dependencies": {
     "dexie": "^4.0.11",

@@ -119,6 +119,8 @@ export interface RatingField {
   highLabel: string
 }
 
+import type { Detector } from '@/lib/detectors'
+
 export interface GameConfig {
   /** e.g. 'rebuilt2026' */
   id: string
@@ -131,6 +133,12 @@ export interface GameConfig {
   /** Length of endgame, seconds, measured from the end of the match. */
   endgameSec: number
   actions: GameAction[]
+  /**
+   * Camera detectors offered for this game, in display order. Zones start
+   * empty, so none of them can fire until a scout draws the area — that is
+   * what stops a detector inventing data on a field it has never seen.
+   */
+  detectors: Detector[]
   windows: MatchWindow[]
   rankingPoints: RankingPointDef[]
   pitFields: PitField[]

@@ -4,10 +4,9 @@ import { getGame } from '@/games'
 import type { CounterAction, Phase, SelectAction, ToggleAction } from '@/games/types'
 import { db, saveMatch } from '@/lib/db'
 import { matchId, SCHEMA_VERSION, type ScoutEvent, type Alliance } from '@/lib/schema'
-import { loadSettings, loadVisionConfig, saveVisionConfig } from '@/lib/settings'
-import { DEFAULT_VISION, type VisionConfig } from '@/lib/vision'
-import type { VisionMode } from '@/lib/ballTracker'
-import { VisionCounter } from '@/features/vision/VisionCounter'
+import { loadDetectors, loadSettings, saveDetectors } from '@/lib/settings'
+import type { Detector, DetectorEvent } from '@/lib/detectors'
+import { VisionCounter, type CameraMode } from '@/features/vision/VisionCounter'
 import { getCachedEvent, teamInfo } from '@/lib/tba'
 import type { CachedEvent } from '@/lib/schema'
 import { Card, Field, Panel, Pill, Toast } from '@/components/ui'
@@ -50,20 +49,44 @@ export default function MatchScout() {
   const [noShow, setNoShow] = useState(false)
   const [notes, setNotes] = useState('')
 
-  // Camera-assisted FUEL counting. The mode and tuning persist per device,
-  // because they depend on that device's camera and where it is pointed.
-  const [visionMode, setVisionMode] = useState<VisionMode>(
-    (settings.visionMode as VisionMode) || 'manual')
-  const [visionConfig, setVisionConfig] = useState<VisionConfig>(
-    () => loadVisionConfig(DEFAULT_VISION))
+  // Camera-assisted scouting. The mode and every detector's setup persist
+  // per device, because they depend on that device's camera and where it is
+  // pointed — they cannot be shared between scouts.
+  const [visionMode, setVisionMode] = useState<CameraMode>(
+    (settings.visionMode as CameraMode) || 'manual')
+  const [detectors, setDetectorState] = useState<Detector[]>(
+    () => loadDetectors(game.id, game.detectors))
 
-  function updateVisionConfig(next: VisionConfig) {
-    setVisionConfig(next)
-    saveVisionConfig(next)
+  function updateDetectors(next: Detector[]) {
+    setDetectorState(next)
+    saveDetectors(game.id, next)
   }
-  function updateVisionMode(next: VisionMode) {
+  function updateVisionMode(next: CameraMode) {
     setVisionMode(next)
     localStorage.setItem('vision_mode', next)
+  }
+
+  /**
+   * A detector fired: put it where it belongs on the form.
+   *
+   * Everything the camera produces lands in the same fields a scout would
+   * have filled in by hand, so it is visible, correctable and undoable
+   * before the match is saved. Nothing is written anywhere a human cannot
+   * see it and disagree.
+   */
+  function applyDetectorEvent(e: DetectorEvent) {
+    const d = detectors.find((x) => x.id === e.detectorId)
+    if (!d) return
+
+    const target = d.target
+    if (target.kind === 'counter') {
+      const actionId = target.byPhase[phase]
+      if (actionId) bump(actionId, d.step)
+    } else if (target.kind === 'state') {
+      setStates((prev) => ({ ...prev, [target.id]: target.value }))
+    } else if (target.id === 'died') {
+      setDied(true)
+    }
   }
 
   // Which counter the camera drives, per phase.
@@ -325,12 +348,12 @@ export default function MatchScout() {
         <VisionCounter
           mode={visionMode}
           onModeChange={updateVisionMode}
-          config={visionConfig}
-          onConfigChange={updateVisionConfig}
+          detectors={detectors}
+          onDetectorsChange={updateDetectors}
+          onEvent={applyDetectorEvent}
           counted={Math.max(0, totals[visionActionId] ?? 0)}
           label={visionAction?.label ?? 'FUEL scored'}
           step={visionAction?.step ?? 1}
-          onScore={() => bump(visionActionId, 1)}
           onManualAdjust={(d) => bump(visionActionId, d)}
         />
       )}

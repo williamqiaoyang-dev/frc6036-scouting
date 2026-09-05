@@ -1,43 +1,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
+import { getGame } from '@/games'
 import { saveMarker } from '@/lib/db'
 import { markerId, SCHEMA_VERSION, type CachedMatch } from '@/lib/schema'
-import { loadVisionConfig, saveVisionConfig } from '@/lib/settings'
-import { DEFAULT_VISION, type VisionConfig } from '@/lib/vision'
-import type { VisionMode } from '@/lib/ballTracker'
-import { formatTime } from '@/lib/youtube'
+import { loadDetectors, loadSettings, saveDetectors } from '@/lib/settings'
+import type { Detector, DetectorEvent } from '@/lib/detectors'
 import { videoWatchUrl } from '@/lib/tba'
+import { formatTime } from '@/lib/youtube'
 import { Panel } from '@/components/ui'
-import { VisionTuning } from '@/features/vision/VisionTuning'
-import { drawVisionOverlay, type Point } from '@/features/vision/overlay'
-import { useFrameVision, type FrameShot } from '@/features/vision/useFrameVision'
+import { DetectorList, detectorColor } from '@/features/vision/DetectorList'
+import { DetectorTuning } from '@/features/vision/DetectorTuning'
+import { drawDetectorOverlay, type Point } from '@/features/vision/overlay'
+import { useDetectors } from '@/features/vision/useDetectors'
 
 type Source =
   | { kind: 'none' }
   | { kind: 'file'; url: string; name: string }
   | { kind: 'screen'; stream: MediaStream }
 
-type Tool = 'none' | 'zone' | 'sample' | 'floor'
-
-interface Shot { id: number; t: number; x: number; y: number; team: number | null }
+interface Hit extends DetectorEvent { key: number; team: number | null }
 
 /**
- * Counts shots off match footage instead of off a live camera.
+ * Reads a match off film instead of off a live camera.
  *
- * The catch worth stating plainly: a YouTube embed is a cross-origin iframe,
- * so its pixels can never be read by this page — no detector of any kind can
- * run against the embed above. Two sources do work, and both are offered:
+ * The catch worth stating plainly: a YouTube embed is a cross-origin
+ * iframe, so its pixels can never be read by this page — no detector of any
+ * kind can run against the embed above, in any season. Two sources do work,
+ * and both are offered:
  *
  *   Video file  — a recording from the stands. Fully scrubbable, so a scan
- *                 can be replayed, re-tuned and re-run until the count is
- *                 right.
+ *                 can be replayed, re-tuned and re-run until it is right.
  *   Shared tab  — the browser hands over the pixels of a tab you choose, so
- *                 TBA footage can be analysed by playing it in its own tab.
- *                 Live only: this page cannot scrub someone else's tab.
+ *                 TBA footage can be read by playing it in its own tab.
  *
- * Detected shots land as timestamped markers on the same rail as hand-made
- * ones, attributed to whichever robot is being watched. They are proposals a
- * human confirms, never a silent edit to a scout's record.
+ * Every detector the game defines runs at once, so one pass over a video
+ * fills in more than shots. What comes out are proposals a human confirms —
+ * they land as markers, never as a silent edit to a scout's record.
  */
 export function FilmAnalyzer({
   match, eventKey, author, scoutedFuel, onMarkersChanged,
@@ -45,28 +43,33 @@ export function FilmAnalyzer({
   match: CachedMatch
   eventKey: string
   author: string
-  /** What the scouts recorded for each robot, for the count comparison. */
   scoutedFuel: Record<number, number>
   onMarkersChanged: () => void
 }) {
+  const settings = loadSettings()
+  const game = getGame(settings.gameId)
+
   const videoRef = useRef<HTMLVideoElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const shotId = useRef(1)
   const scanRef = useRef(false)
+  const hitKey = useRef(1)
 
   const [source, setSource] = useState<Source>({ kind: 'none' })
   const [video, setVideo] = useState<HTMLVideoElement | null>(null)
-  const [mode, setMode] = useState<VisionMode>('dynamic')
+  const [detectors, setDetectorState] = useState<Detector[]>(
+    () => loadDetectors(game.id, game.detectors))
   const [running, setRunning] = useState(false)
-  const [config, setConfig] = useState<VisionConfig>(() => loadVisionConfig(DEFAULT_VISION))
-  const [tool, setTool] = useState<Tool>('none')
-  const [draft, setDraft] = useState<Point[]>([])
-  const [shots, setShots] = useState<Shot[]>([])
+  const [progress, setProgress] = useState<number | null>(null)
+  const [hits, setHits] = useState<Hit[]>([])
   const [team, setTeam] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(0)
-  const [progress, setProgress] = useState<number | null>(null)
+
+  const [drawing, setDrawing] = useState<string | null>(null)
+  const [sampling, setSampling] = useState<string | null>(null)
+  const [draft, setDraft] = useState<Point[]>([])
+  const [tuned, setTuned] = useState(game.detectors[0]?.id ?? '')
 
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
@@ -74,45 +77,43 @@ export function FilmAnalyzer({
   const [rate, setRate] = useState(1)
 
   const teams = useMemo(() => [...match.red, ...match.blue], [match])
-  const zoneReady = config.zone.length >= 3
   const live = source.kind !== 'none'
+  const seekable = source.kind === 'file'
+  const armed = detectors.filter((d) => d.enabled && d.zone.length >= 3)
 
-  function updateConfig(next: VisionConfig) {
-    setConfig(next)
-    saveVisionConfig(next)
+  function setDetectors(next: Detector[]) {
+    setDetectorState(next)
+    saveDetectors(game.id, next)
   }
 
-  // ---- detection ---------------------------------------------------------
-  const onShot = useCallback((s: FrameShot) => {
-    setShots((prev) => {
-      // Re-scanning a stretch already covered should refine the list, not
-      // pile duplicates onto it.
-      if (prev.some((p) => Math.abs(p.t - s.t) < 0.35)) return prev
-      return [...prev, { id: shotId.current++, t: s.t, x: s.x, y: s.y, team: null }]
-        .sort((a, b) => a.t - b.t)
+  const onEvent = useCallback((e: DetectorEvent) => {
+    setHits((prev) => {
+      // Re-scanning a stretch should refine the list, not pile duplicates on.
+      if (prev.some((p) => p.detectorId === e.detectorId && Math.abs(p.t - e.t) < 0.35)) return prev
+      return [...prev, { ...e, key: hitKey.current++, team: null }].sort((a, b) => a.t - b.t)
     })
   }, [])
 
   const { detections, blocked, sampleAt, reset, processFrame, procWidth, procHeight } =
-    useFrameVision({
-      video, mode, config,
-      // Only a stream needs the presented-frame loop; a file is scanned by
-      // seeking, which keeps working when the tab is in the background.
+    useDetectors({
+      video, detectors,
+      // Only a stream needs the live loop; a file is scanned by seeking,
+      // which keeps working when the tab is in the background.
       liveLoop: running && source.kind === 'screen',
       track: source.kind === 'screen' ? source.stream.getVideoTracks()[0] : null,
-      onShot,
+      onEvent,
     })
 
   // ---- sources -----------------------------------------------------------
   function openFile(file: File) {
     releaseSource()
-    setShots([]); setError(''); setSaved(0)
+    setHits([]); setError(''); setSaved(0)
     setSource({ kind: 'file', url: URL.createObjectURL(file), name: file.name })
   }
 
   async function shareTab() {
     releaseSource()
-    setShots([]); setError(''); setSaved(0)
+    setHits([]); setError(''); setSaved(0)
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 30 }, audio: false,
@@ -139,7 +140,6 @@ export function FilmAnalyzer({
 
   useEffect(() => () => releaseSource(), [])
 
-  // Attach whichever source we have to the single <video> element.
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
@@ -159,8 +159,6 @@ export function FilmAnalyzer({
   }, [source])
 
   // ---- transport ---------------------------------------------------------
-  const seekable = source.kind === 'file'
-
   function toggle() {
     const v = videoRef.current
     if (!v) return
@@ -224,66 +222,81 @@ export function FilmAnalyzer({
   useEffect(() => {
     const canvas = overlayRef.current
     if (!canvas) return
-    drawVisionOverlay(canvas, { config, draft, detections, procWidth, procHeight })
-  }, [detections, config, draft, procWidth, procHeight])
+    drawDetectorOverlay(canvas, {
+      detectors, colorOf: (id) => detectorColor(detectors, id),
+      seen: detections, draft, drawingId: drawing, procWidth, procHeight,
+    })
+  }, [detections, detectors, draft, drawing, procWidth, procHeight])
 
   function onCanvasClick(e: React.MouseEvent<HTMLCanvasElement>) {
     const r = e.currentTarget.getBoundingClientRect()
     const p = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }
 
-    if (tool === 'zone') setDraft((d) => [...d, p])
-    else if (tool === 'floor') {
-      updateConfig({ ...config, groundY: Math.min(0.99, Math.max(0.05, p.y)) })
-      setTool('none')
-    } else if (tool === 'sample') {
+    if (drawing) { setDraft((d) => [...d, p]); return }
+    if (sampling) {
       const s = sampleAt(p.x, p.y)
       if (s && s.value > 0.08) {
-        updateConfig({
-          ...config,
-          hue: Math.round(s.hue),
-          minSaturation: Math.max(0.15, s.saturation * 0.55),
-          minValue: Math.max(0.12, s.value * 0.45),
-        })
-        setTool('none')
-      } else setError('That spot is too dark to sample. Try a lit part of the ball.')
+        setDetectors(detectors.map((d) => d.id === sampling ? {
+          ...d,
+          appearance: {
+            ...d.appearance,
+            hue: Math.round(s.hue),
+            minSaturation: Math.max(0.15, s.saturation * 0.55),
+            minValue: Math.max(0.12, s.value * 0.45),
+          },
+        } : d))
+        setSampling(null)
+      } else setError('That spot is too dark to sample. Try a lit part of it.')
     }
   }
 
   function finishZone() {
-    if (draft.length >= 3) updateConfig({ ...config, zone: draft })
+    if (drawing && draft.length >= 3) {
+      setDetectors(detectors.map((d) => d.id === drawing ? { ...d, zone: draft, enabled: true } : d))
+    }
     setDraft([])
-    setTool('none')
+    setDrawing(null)
     reset()
   }
 
-  // Sampling needs a frame in hand, which only the detector produces — so
-  // run it briefly while the calibration tools are open.
-  useEffect(() => {
-    if (tool === 'sample' && !running) setRunning(true)
-  }, [tool])
+  // Sampling needs a frame in hand; pull one so a paused video can be used.
+  useEffect(() => { if (sampling) processFrame() }, [sampling, processFrame])
 
   // ---- results -----------------------------------------------------------
-  const assigned = shots.map((s) => ({ ...s, team: s.team ?? team }))
-  const perTeam = useMemo(() => {
-    const t: Record<number, number> = {}
-    for (const s of assigned) if (s.team) t[s.team] = (t[s.team] ?? 0) + 1
-    return t
-  }, [assigned])
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {}
+    for (const h of hits) c[h.detectorId] = (c[h.detectorId] ?? 0) + 1
+    return c
+  }, [hits])
+
+  const assigned = hits.map((h) => ({ ...h, team: h.team ?? team }))
+
+  function targetLabel(d: Detector): string {
+    if (d.target.kind === 'flag') return 'died on field'
+    if (d.target.kind === 'state') {
+      const action = game.actions.find((a) => a.id === (d.target as any).id)
+      return action?.label ?? (d.target as any).id
+    }
+    const id = d.target.byPhase.teleop ?? d.target.byPhase.auto ?? ''
+    const action = game.actions.find((a) => a.id === id)
+    return action?.label ?? id
+  }
 
   async function saveAsMarkers() {
-    const rows = assigned.filter((s) => s.team)
-    for (const s of rows) {
+    const rows = assigned.filter((h) => h.team)
+    for (const h of rows) {
+      const d = detectors.find((x) => x.id === h.detectorId)
       await saveMarker({
-        id: markerId(match.key, s.t, `${author}-auto`),
+        id: markerId(match.key, h.t, `${author}-${h.detectorId}`),
         schemaVersion: SCHEMA_VERSION,
         eventKey,
         matchKey: match.key,
         matchNumber: match.matchNumber,
         matchLevel: match.matchLevel,
-        t: s.t,
-        teamNumber: s.team,
+        t: h.t,
+        teamNumber: h.team,
         tag: 'shot',
-        note: `Detected by ${mode} film analysis`,
+        note: `${d?.label ?? h.detectorId} — detected from film`,
         author: author || 'anonymous',
         createdAt: Date.now(),
         synced: false,
@@ -297,9 +310,9 @@ export function FilmAnalyzer({
 
   return (
     <Panel
-      title="Shot detection from film"
+      title="Detection from film"
       right={<span className="text-[12px] text-chalk-faint">
-        {shots.length} detected
+        {hits.length} found
         {progress !== null && ` · scanning ${Math.round(progress * 100)}%`}
         {running && progress === null && ' · watching'}
       </span>}
@@ -310,15 +323,13 @@ export function FilmAnalyzer({
           onChange={(e) => { const f = e.target.files?.[0]; if (f) openFile(f) }} />
         <button type="button" onClick={() => fileRef.current?.click()}
           className={clsx('h-8 rounded-panel border px-3 text-[13px] font-600 transition',
-            source.kind === 'file'
-              ? 'border-signal bg-signal/15 text-signal'
+            source.kind === 'file' ? 'border-signal bg-signal/15 text-signal'
               : 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk')}>
           Open a video file
         </button>
         <button type="button" onClick={shareTab}
           className={clsx('h-8 rounded-panel border px-3 text-[13px] font-600 transition',
-            source.kind === 'screen'
-              ? 'border-signal bg-signal/15 text-signal'
+            source.kind === 'screen' ? 'border-signal bg-signal/15 text-signal'
               : 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk')}>
           Share a tab
         </button>
@@ -340,241 +351,216 @@ export function FilmAnalyzer({
       {!live && (
         <div className="rounded-panel border border-deck-600 bg-deck-900 p-3">
           <p className="text-[13px] leading-relaxed text-chalk-dim">
-            The player above is a YouTube iframe, and a page cannot read the pixels
-            of another site's frame — so nothing can count shots off it directly.
-            Two ways round that:
+            The player above is a YouTube iframe, and a page cannot read the pixels of
+            another site's frame — so nothing can read shots off it directly, whatever
+            the season. Two ways round that:
           </p>
           <ul className="mt-2 space-y-1 text-[13px] leading-relaxed text-chalk-dim">
             <li>
               <span className="font-600 text-chalk">Open a video file</span> — your own
-              recording from the stands. Scrub, re-tune and re-scan until the count is right.
+              recording from the stands. Scrub, re-tune and re-scan until it is right.
             </li>
             <li>
               <span className="font-600 text-chalk">Share a tab</span> — open this match on
-              YouTube, come back, share that tab, and play it there. Detection runs on the
-              shared picture. Live only: this page can't scrub someone else's tab.
+              YouTube, come back, share that tab, and play it there.
             </li>
           </ul>
         </div>
       )}
 
       {live && (
-        <>
-          <div className="relative overflow-hidden rounded-panel border border-deck-500 bg-black">
-            <video ref={videoRef} playsInline muted={source.kind === 'screen'}
-              className="block max-h-[60vh] w-full"
-              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
-              onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-              onPlay={() => setPlaying(true)}
-              onPause={() => setPlaying(false)}
-              onEnded={() => { setPlaying(false); setRunning(false) }} />
-            <canvas ref={overlayRef} onClick={onCanvasClick}
-              className={clsx('absolute inset-0 h-full w-full',
-                tool !== 'none' ? 'cursor-crosshair' : 'cursor-default')} />
-            {tool !== 'none' && (
-              <div className="absolute inset-x-0 top-0 bg-signal px-2 py-1 text-[12px] font-600 text-deck-900">
-                {tool === 'zone' && `Click the corners of the goal, then Finish. ${draft.length} placed.`}
-                {tool === 'sample' && 'Click a FUEL ball to learn its colour.'}
-                {tool === 'floor' && 'Click where the floor starts.'}
-              </div>
-            )}
-          </div>
-
-          {/* ---- transport ------------------------------------------------ */}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <button type="button" onClick={toggle} className="btn-ghost h-8 w-16 py-0 text-[13px]">
-              {playing ? '❙❙ Pause' : '▶ Play'}
-            </button>
-            {seekable && (
-              <>
-                <button type="button" onClick={() => step(-5)} className="btn-ghost h-8 py-0 text-[13px]">−5s</button>
-                <button type="button" onClick={() => step(-1 / 30)} className="btn-ghost h-8 py-0 text-[13px]" title="One frame back">◀|</button>
-                <button type="button" onClick={() => step(1 / 30)} className="btn-ghost h-8 py-0 text-[13px]" title="One frame on">|▶</button>
-                <button type="button" onClick={() => step(5)} className="btn-ghost h-8 py-0 text-[13px]">+5s</button>
-                <span className="font-mono text-[12px] tabular-nums text-chalk-dim">
-                  {formatTime(time)}<span className="text-chalk-faint"> / {formatTime(duration)}</span>
-                </span>
-              </>
-            )}
-            {!seekable && (
-              <span className="text-[12px] text-chalk-faint">
-                Mirroring the shared tab — play the video there. Counting keeps
-                running while you watch it.
-              </span>
-            )}
-            <div className="ml-auto flex items-center gap-1">
-              {[0.5, 1, 2, 4].map((r) => (
-                <button key={r} type="button" onClick={() => setSpeed(r)}
-                  className={clsx('h-8 rounded px-2 text-[13px] font-600 transition',
-                    rate === r ? 'bg-signal/15 text-chalk' : 'text-chalk-dim hover:bg-deck-600')}>
-                  {r}×
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {seekable && duration > 0 && (
-            <div className="relative mt-1.5 h-5">
-              <input type="range" min={0} max={duration} step={0.05} value={time}
-                onChange={(e) => { const v = videoRef.current; if (v) v.currentTime = Number(e.target.value) }}
-                className="absolute inset-x-0 top-1.5 w-full accent-signal" />
-              {shots.map((s) => (
-                <button key={s.id} type="button"
-                  onClick={() => { const v = videoRef.current; if (v) v.currentTime = s.t }}
-                  title={formatTime(s.t)}
-                  style={{ left: `${Math.min(99, (s.t / duration) * 100)}%` }}
-                  className="absolute top-0 h-2 w-0.5 -translate-x-1/2 bg-emerald-400" />
-              ))}
-            </div>
-          )}
-
-          {/* ---- calibration --------------------------------------------- */}
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {tool === 'zone' ? (
-              <>
-                <button type="button" onClick={finishZone} disabled={draft.length < 3}
-                  className="btn-primary h-8 py-0 text-[13px]">Finish goal area</button>
-                <button type="button" onClick={() => { setDraft([]); setTool('none') }}
-                  className="btn-ghost h-8 py-0 text-[13px]">Cancel</button>
-              </>
-            ) : (
-              <>
-                <button type="button" onClick={() => { setDraft([]); setTool('zone') }}
-                  className="btn-ghost h-8 py-0 text-[13px]">
-                  {zoneReady ? 'Redraw goal area' : 'Mark goal area'}
-                </button>
-                <button type="button" onClick={() => setTool('sample')}
-                  className="btn-ghost h-8 py-0 text-[13px]">Sample ball colour</button>
-                <button type="button" onClick={() => setTool('floor')}
-                  className="btn-ghost h-8 py-0 text-[13px]">Set floor line</button>
-              </>
-            )}
-          </div>
-
-          {/* ---- run ------------------------------------------------------ */}
-          <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-deck-600 pt-3">
-            <div className="flex gap-px">
-              {([['static', 'AI static'], ['dynamic', 'AI dynamic']] as [VisionMode, string][]).map(([id, label]) => (
-                <button key={id} type="button" onClick={() => { setMode(id); reset() }}
-                  className={clsx('h-8 rounded-panel border px-3 text-[13px] font-600 transition',
-                    mode === id
-                      ? 'border-signal bg-signal/15 text-signal'
-                      : 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk')}>
-                  {label}
-                </button>
-              ))}
-            </div>
-            {running ? (
-              <button type="button" onClick={stop}
-                className="btn-ghost h-8 py-0 text-[13px]">Stop</button>
-            ) : (
-              <button type="button" onClick={scan} disabled={!zoneReady}
-                className="btn-primary h-8 py-0 text-[13px] disabled:opacity-30">
-                {seekable ? 'Scan from here' : 'Start detecting'}
-              </button>
-            )}
-            <button type="button" onClick={() => { setShots([]); setSaved(0); reset() }}
-              className="btn-ghost h-8 py-0 text-[13px]">Clear results</button>
-
-            <select className="input h-8 w-auto py-0 text-[13px]"
-              value={team ?? ''} onChange={(e) => setTeam(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">Watching which robot?</option>
-              {teams.map((t) => (
-                <option key={t} value={t}>
-                  {t} · {match.red.includes(t) ? 'red' : 'blue'}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {progress !== null && (
-            <div className="mt-2 h-1 overflow-hidden rounded bg-deck-600">
-              <div className="h-full bg-signal transition-[width]"
-                style={{ width: `${Math.round(progress * 100)}%` }} />
-            </div>
-          )}
-
-          {!zoneReady && (
-            <p className="mt-2 text-[12px] leading-snug text-signal">
-              Mark the goal area before scanning. Nothing counts until you do — that
-              is what keeps balls on the floor out of the tally.
-            </p>
-          )}
-          {blocked && (
-            <p className="mt-2 text-[12px] leading-snug text-alliance-red">
-              This video's pixels can't be read — it comes from another site. Use a
-              downloaded file, or share the tab that is playing it.
-            </p>
-          )}
-          {error && <p className="mt-2 text-[12px] text-alliance-red">{error}</p>}
-
-          {/* ---- results -------------------------------------------------- */}
-          {shots.length > 0 && (
-            <div className="mt-3 border-t border-deck-600 pt-3">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="font-display text-[15px] font-600 text-chalk">
-                  {shots.length} shot{shots.length === 1 ? '' : 's'} detected
-                </span>
-                {team && (
-                  <span className="text-[12px] text-chalk-dim">
-                    scouts recorded <span className="font-600 text-chalk">{scoutedFuel[team] ?? 0}</span> FUEL for {team}
-                  </span>
-                )}
-                <button type="button" onClick={saveAsMarkers} disabled={!team}
-                  className="btn-primary ml-auto h-8 py-0 text-[13px] disabled:opacity-30">
-                  Save as markers
-                </button>
-              </div>
-
-              {saved > 0 && (
-                <p className="mb-2 text-[12px] text-emerald-300">
-                  {saved} marker{saved === 1 ? '' : 's'} written to this match.
-                </p>
-              )}
-
-              <div className="max-h-56 space-y-1 overflow-y-auto">
-                {assigned.map((s) => (
-                  <div key={s.id} className="group flex items-center gap-2 rounded-panel border border-deck-600 px-2 py-1">
-                    <button type="button"
-                      onClick={() => { const v = videoRef.current; if (v && seekable) v.currentTime = s.t }}
-                      className="font-mono text-[12px] font-600 text-chalk hover:underline">
-                      {formatTime(s.t)}
-                    </button>
-                    <span className="text-[11px] text-chalk-faint">
-                      {Math.round(s.x * 100)}%, {Math.round(s.y * 100)}%
-                    </span>
-                    <select className="ml-auto h-6 rounded border border-deck-500 bg-deck-900 px-1 text-[12px] text-chalk-dim"
-                      value={s.team ?? ''}
-                      onChange={(e) => setShots((prev) => prev.map((p) =>
-                        p.id === s.id ? { ...p, team: e.target.value ? Number(e.target.value) : null } : p))}>
-                      <option value="">unassigned</option>
-                      {teams.map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                    <button type="button" onClick={() => setShots((prev) => prev.filter((p) => p.id !== s.id))}
-                      className="px-1 text-chalk-faint opacity-0 transition group-hover:opacity-100 hover:text-alliance-red">
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              {Object.keys(perTeam).length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2 text-[12px] text-chalk-dim">
-                  {Object.entries(perTeam).map(([t, n]) => (
-                    <span key={t} className={clsx('rounded px-1.5 font-mono',
-                      match.red.includes(Number(t))
-                        ? 'bg-alliance-red/15 text-alliance-red'
-                        : 'bg-alliance-blue/15 text-alliance-blue')}>
-                      {t}: {n}
-                    </span>
-                  ))}
+        <div className="grid gap-3 xl:grid-cols-[1fr_340px]">
+          <div>
+            <div className="relative overflow-hidden rounded-panel border border-deck-500 bg-black">
+              <video ref={videoRef} playsInline muted={source.kind === 'screen'}
+                className="block max-h-[60vh] w-full"
+                onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
+                onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+                onEnded={() => { setPlaying(false); setRunning(false) }} />
+              <canvas ref={overlayRef} onClick={onCanvasClick}
+                className={clsx('absolute inset-0 h-full w-full',
+                  drawing || sampling ? 'cursor-crosshair' : 'cursor-default')} />
+              {(drawing || sampling) && (
+                <div className="absolute inset-x-0 top-0 bg-signal px-2 py-1 text-[12px] font-600 text-deck-900">
+                  {drawing
+                    ? `Click the corners of the area for “${detectors.find((d) => d.id === drawing)?.label}”, then Finish. ${draft.length} placed.`
+                    : `Click the thing “${detectors.find((d) => d.id === sampling)?.label}” should look for.`}
                 </div>
               )}
             </div>
-          )}
 
-          <VisionTuning config={config} onChange={updateConfig} />
-        </>
+            {/* ---- transport ---------------------------------------------- */}
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <button type="button" onClick={toggle} className="btn-ghost h-8 w-16 py-0 text-[13px]">
+                {playing ? '❙❙ Pause' : '▶ Play'}
+              </button>
+              {seekable ? (
+                <>
+                  <button type="button" onClick={() => step(-5)} className="btn-ghost h-8 py-0 text-[13px]">−5s</button>
+                  <button type="button" onClick={() => step(-1 / 30)} className="btn-ghost h-8 py-0 text-[13px]" title="One frame back">◀|</button>
+                  <button type="button" onClick={() => step(1 / 30)} className="btn-ghost h-8 py-0 text-[13px]" title="One frame on">|▶</button>
+                  <button type="button" onClick={() => step(5)} className="btn-ghost h-8 py-0 text-[13px]">+5s</button>
+                  <span className="font-mono text-[12px] tabular-nums text-chalk-dim">
+                    {formatTime(time)}<span className="text-chalk-faint"> / {formatTime(duration)}</span>
+                  </span>
+                </>
+              ) : (
+                <span className="text-[12px] text-chalk-faint">
+                  Mirroring the shared tab — play the video there. Detection keeps
+                  running while you watch it.
+                </span>
+              )}
+              <div className="ml-auto flex items-center gap-1">
+                {[0.5, 1, 2, 4].map((r) => (
+                  <button key={r} type="button" onClick={() => setSpeed(r)}
+                    className={clsx('h-8 rounded px-2 text-[13px] font-600 transition',
+                      rate === r ? 'bg-signal/15 text-chalk' : 'text-chalk-dim hover:bg-deck-600')}>
+                    {r}×
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {seekable && duration > 0 && (
+              <div className="relative mt-1.5 h-5">
+                <input type="range" min={0} max={duration} step={0.05} value={time}
+                  onChange={(e) => { const v = videoRef.current; if (v) v.currentTime = Number(e.target.value) }}
+                  className="absolute inset-x-0 top-1.5 w-full accent-signal" />
+                {hits.map((h) => (
+                  <button key={h.key} type="button"
+                    onClick={() => { const v = videoRef.current; if (v) v.currentTime = h.t }}
+                    title={`${formatTime(h.t)} · ${detectors.find((d) => d.id === h.detectorId)?.label}`}
+                    style={{ left: `${Math.min(99, (h.t / duration) * 100)}%`,
+                             background: detectorColor(detectors, h.detectorId) }}
+                    className="absolute top-0 h-2 w-0.5 -translate-x-1/2" />
+                ))}
+              </div>
+            )}
+
+            {/* ---- run ----------------------------------------------------- */}
+            <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-deck-600 pt-3">
+              {drawing ? (
+                <>
+                  <button type="button" onClick={finishZone} disabled={draft.length < 3}
+                    className="btn-primary h-8 py-0 text-[13px] disabled:opacity-30">Finish area</button>
+                  <button type="button" onClick={() => { setDraft([]); setDrawing(null) }}
+                    className="btn-ghost h-8 py-0 text-[13px]">Cancel</button>
+                </>
+              ) : running ? (
+                <button type="button" onClick={stop} className="btn-ghost h-8 py-0 text-[13px]">Stop</button>
+              ) : (
+                <button type="button" onClick={scan} disabled={!armed.length}
+                  className="btn-primary h-8 py-0 text-[13px] disabled:opacity-30">
+                  {seekable ? `Scan with ${armed.length} detector${armed.length === 1 ? '' : 's'}` : 'Start detecting'}
+                </button>
+              )}
+              <button type="button" onClick={() => { setHits([]); setSaved(0); reset() }}
+                className="btn-ghost h-8 py-0 text-[13px]">Clear results</button>
+
+              <select className="input h-8 w-auto py-0 text-[13px]"
+                value={team ?? ''} onChange={(e) => setTeam(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Watching which robot?</option>
+                {teams.map((t) => (
+                  <option key={t} value={t}>{t} · {match.red.includes(t) ? 'red' : 'blue'}</option>
+                ))}
+              </select>
+            </div>
+
+            {progress !== null && (
+              <div className="mt-2 h-1 overflow-hidden rounded bg-deck-600">
+                <div className="h-full bg-signal transition-[width]"
+                  style={{ width: `${Math.round(progress * 100)}%` }} />
+              </div>
+            )}
+
+            {!armed.length && (
+              <p className="mt-2 text-[12px] leading-snug text-signal">
+                No detector has an area drawn yet. Nothing can fire until one does —
+                that is what stops the camera inventing data about a field it has
+                never seen.
+              </p>
+            )}
+            {blocked && (
+              <p className="mt-2 text-[12px] leading-snug text-alliance-red">
+                This video's pixels can't be read — it comes from another site. Use a
+                downloaded file, or share the tab that is playing it.
+              </p>
+            )}
+            {error && <p className="mt-2 text-[12px] text-alliance-red">{error}</p>}
+
+            {/* ---- results -------------------------------------------------- */}
+            {hits.length > 0 && (
+              <div className="mt-3 border-t border-deck-600 pt-3">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="font-display text-[15px] font-600 text-chalk">
+                    {hits.length} event{hits.length === 1 ? '' : 's'}
+                  </span>
+                  {team && counts.fuel_scored > 0 && (
+                    <span className="text-[12px] text-chalk-dim">
+                      scouts recorded{' '}
+                      <span className="font-600 text-chalk">{scoutedFuel[team] ?? 0}</span> FUEL for {team}
+                    </span>
+                  )}
+                  <button type="button" onClick={saveAsMarkers} disabled={!team}
+                    className="btn-primary ml-auto h-8 py-0 text-[13px] disabled:opacity-30">
+                    Save as markers
+                  </button>
+                </div>
+
+                {saved > 0 && (
+                  <p className="mb-2 text-[12px] text-emerald-300">
+                    {saved} marker{saved === 1 ? '' : 's'} written to this match.
+                  </p>
+                )}
+
+                <div className="max-h-56 space-y-1 overflow-y-auto">
+                  {assigned.map((h) => (
+                    <div key={h.key} className="group flex items-center gap-2 rounded-panel border border-deck-600 px-2 py-1">
+                      <button type="button"
+                        onClick={() => { const v = videoRef.current; if (v && seekable) v.currentTime = h.t }}
+                        className="font-mono text-[12px] font-600 text-chalk hover:underline">
+                        {formatTime(h.t)}
+                      </button>
+                      <span className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ background: detectorColor(detectors, h.detectorId) }} />
+                      <span className="truncate text-[12px] text-chalk-dim">
+                        {detectors.find((d) => d.id === h.detectorId)?.label ?? h.detectorId}
+                      </span>
+                      <select className="ml-auto h-6 rounded border border-deck-500 bg-deck-900 px-1 text-[12px] text-chalk-dim"
+                        value={h.team ?? ''}
+                        onChange={(e) => setHits((prev) => prev.map((p) =>
+                          p.key === h.key ? { ...p, team: e.target.value ? Number(e.target.value) : null } : p))}>
+                        <option value="">unassigned</option>
+                        {teams.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                      <button type="button" onClick={() => setHits((prev) => prev.filter((p) => p.key !== h.key))}
+                        className="px-1 text-chalk-faint opacity-0 transition group-hover:opacity-100 hover:text-alliance-red">
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ---- detectors ------------------------------------------------- */}
+          <div>
+            <DetectorList
+              detectors={detectors}
+              onChange={setDetectors}
+              counts={counts}
+              drawing={drawing}
+              onDraw={(id) => { setSampling(null); setDraft([]); setDrawing(id) }}
+              onSample={(id) => { setDrawing(null); setDraft([]); setSampling(id) }}
+              targetLabel={targetLabel}
+            />
+            <DetectorTuning detectors={detectors} selectedId={tuned} onSelect={setTuned}
+              onChange={(next) => setDetectors(detectors.map((d) => d.id === next.id ? next : d))} />
+          </div>
+        </div>
       )}
     </Panel>
   )

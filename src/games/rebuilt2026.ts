@@ -1,3 +1,4 @@
+import type { Detector } from '@/lib/detectors'
 import type { GameConfig } from './types'
 
 /**
@@ -19,6 +20,152 @@ import type { GameConfig } from './types'
  * scores and every tap is timestamped. `lib/stats.ts` buckets those events
  * into the windows below afterwards.
  */
+
+/**
+ * Appearance presets. Colours are starting points only — every one of them
+ * is meant to be replaced by sampling the real thing at the venue, because
+ * no guess survives an arena's lighting.
+ */
+const FUEL_LOOK = {
+  hue: 30, hueTolerance: 18, minSaturation: 0.35, minValue: 0.25,
+  minRadius: 4, maxRadius: 40,
+  // A ball is round; that is the whole discriminator.
+  minCircularity: 0.62, maxCircularity: 1,
+  groundY: 0.85,
+}
+
+/**
+ * A bumper is the opposite test: a big, saturated, emphatically *non*-round
+ * slab. The roundness ceiling is what stops a robot detector locking onto
+ * balls of the same colour.
+ */
+const bumperLook = (hue: number) => ({
+  hue, hueTolerance: 22, minSaturation: 0.4, minValue: 0.18,
+  minRadius: 10, maxRadius: 90,
+  minCircularity: 0.08, maxCircularity: 0.6,
+  groundY: 0.99,
+})
+
+const base = {
+  zone: [] as { x: number; y: number }[],
+  step: 1,
+  dwellSec: 2,
+  stillPx: 6,
+  cooldownMs: 220,
+  maxMissedFrames: 6,
+  minTravelPx: 18,
+}
+
+/**
+ * What the camera is allowed to fill in.
+ *
+ * Ordered by how much they can be trusted, and the shaky ones ship switched
+ * off. A detector that is right 60% of the time is worse than no detector,
+ * because a picklist cannot tell which 60%.
+ */
+export const rebuiltDetectors: Detector[] = [
+  {
+    ...base,
+    id: 'fuel_scored',
+    label: 'FUEL scored',
+    hint: 'A ball reaches the HUB and disappears into it. Draw the area over the goal opening.',
+    enabled: true,
+    confidence: 'high',
+    rule: 'vanish-in',
+    appearance: { ...FUEL_LOOK },
+    target: { kind: 'counter', byPhase: { auto: 'auto_fuel_scored', teleop: 'teleop_fuel_scored' } },
+  },
+  {
+    ...base,
+    id: 'fuel_missed',
+    label: 'FUEL missed',
+    hint: 'A ball arrives at the HUB surround without going in. Draw the area *around* the opening, not over it.',
+    enabled: false,
+    confidence: 'medium',
+    rule: 'enter',
+    appearance: { ...FUEL_LOOK },
+    target: { kind: 'counter', byPhase: { auto: 'auto_fuel_missed', teleop: 'teleop_fuel_missed' } },
+  },
+  {
+    ...base,
+    id: 'left_start',
+    label: 'Left the starting zone',
+    hint: 'The robot moves out of where it started. Draw the area over its starting position.',
+    enabled: false,
+    confidence: 'medium',
+    rule: 'exit',
+    appearance: bumperLook(0),
+    dwellSec: 0,
+    target: { kind: 'state', id: 'auto_leave', value: true },
+  },
+  {
+    ...base,
+    id: 'intake_depot',
+    label: 'Depot pickup',
+    hint: 'The robot sits in the depot long enough to collect. Draw the depot.',
+    enabled: false,
+    confidence: 'low',
+    rule: 'dwell',
+    dwellSec: 1.5,
+    cooldownMs: 2500,
+    appearance: bumperLook(0),
+    target: { kind: 'counter', byPhase: { teleop: 'teleop_intake_depot' } },
+  },
+  {
+    ...base,
+    id: 'intake_human',
+    label: 'Human player feed',
+    hint: 'The robot waits at the player station. Draw the station area.',
+    enabled: false,
+    confidence: 'low',
+    rule: 'dwell',
+    dwellSec: 1.5,
+    cooldownMs: 2500,
+    appearance: bumperLook(0),
+    target: { kind: 'counter', byPhase: { teleop: 'teleop_intake_human' } },
+  },
+  {
+    ...base,
+    id: 'intake_floor',
+    label: 'Floor / centre field pickup',
+    hint: 'The robot works the centre of the field. Draw the centre area.',
+    enabled: false,
+    confidence: 'low',
+    rule: 'dwell',
+    dwellSec: 1.5,
+    cooldownMs: 2500,
+    appearance: bumperLook(0),
+    target: { kind: 'counter', byPhase: { teleop: 'teleop_intake_floor' } },
+  },
+  {
+    ...base,
+    id: 'climb_attempt',
+    label: 'Went for the TOWER',
+    hint: 'The robot parks under the TOWER and stays. Sets Level 1 — raise it by hand if they got higher, because a camera cannot judge rung height.',
+    enabled: false,
+    confidence: 'low',
+    rule: 'dwell',
+    dwellSec: 3,
+    cooldownMs: 5000,
+    appearance: bumperLook(0),
+    target: { kind: 'state', id: 'endgame_climb', value: 'l1' },
+  },
+  {
+    ...base,
+    id: 'died',
+    label: 'Stopped moving',
+    hint: 'The robot holds still for 12 seconds. Draw the whole field so it is tracked anywhere.',
+    enabled: false,
+    confidence: 'medium',
+    rule: 'still',
+    dwellSec: 12,
+    stillPx: 5,
+    cooldownMs: 15000,
+    appearance: bumperLook(0),
+    target: { kind: 'flag', id: 'died' },
+  },
+]
+
 export const rebuilt2026: GameConfig = {
   id: 'rebuilt2026',
   year: 2026,
@@ -160,6 +307,8 @@ export const rebuilt2026: GameConfig = {
    * AUTO 0-20, then a 10s TRANSITION SHIFT, four 25s ALLIANCE SHIFTS,
    * and a 30s END GAME where both HUBs go active again.
    */
+  detectors: rebuiltDetectors,
+
   windows: [
     { id: 'auto', label: 'AUTO', startSec: 0, endSec: 20, phase: 'auto', note: 'Both HUBs active' },
     { id: 'transition', label: 'Transition', startSec: 20, endSec: 30, phase: 'teleop', note: 'Both HUBs active' },
