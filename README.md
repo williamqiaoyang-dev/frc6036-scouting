@@ -9,9 +9,13 @@ so next season is a drop-in, not a rewrite.
 
 ### ▶ Live: <https://williamqiaoyang-dev.github.io/frc6036-scouting/>
 
-Open it on any laptop or phone — nothing to install. Add a Blue Alliance key and an
-event key in **Settings** and it's ready to scout. All data stays in that browser
-until you export it, so anyone can open the link without touching your team's data.
+Open it on any laptop or phone — nothing to install. Enter an event key in
+**Settings**, press Sync, and it's ready to scout.
+
+**Your scouting data is private regardless.** Everything a scout records lives in
+that browser's own storage and is never uploaded anywhere. Two people opening the
+same link do not see each other's data until someone exports a bundle and someone
+else imports it. The public link exposes the *app*, not your data.
 
 ---
 
@@ -41,10 +45,24 @@ npm run build        # static files in dist/
 Edit it, redeploy `dist/`, and no scout has to touch Settings. Anything a scout
 does change in Settings is per-device and overrides the file.
 
-> **On `tbaApiKey`:** whatever is in this file is served to anyone who can load the
-> app. Fill it in only for a deployment you control — a team laptop, a LAN server, a
-> private host. For a public URL leave it empty and have scouts paste their own key.
-> TBA read keys are read-only and revocable from your TBA account dashboard.
+Set the key once with the helper (it is a credential, so it goes in a command you
+run rather than a file that gets edited for you):
+
+```bash
+npm run set-key -- <your-tba-read-key>   # writes it into public/config.json
+npm run deploy                            # builds and publishes to gh-pages
+```
+
+> **On `tbaApiKey`:** this file is served to anyone who opens the site, so the key
+> in it is public. That is a deliberate trade so no scout ever types one. It is a
+> TBA **read** key — it can only read public FRC data, cannot write anything, and
+> can be regenerated instantly at
+> [thebluealliance.com/account](https://www.thebluealliance.com/account) if it is
+> ever misused. Rotate it there and redeploy to invalidate the old one.
+>
+> Note that making the GitHub repo private does **not** hide the key: GitHub Pages
+> sites are public regardless, and on GitHub Free a private repo cannot publish
+> Pages at all.
 
 Or configure a single device by hand — open **Settings** and:
 
@@ -86,7 +104,7 @@ strategy laptop by QR code or a JSON file; analysis reads whatever has been merg
 | **Pit** | Pre-event robot survey with photos, plus a "who's left to scout" tracker. |
 | **Super** | One scout rates all three robots on an alliance side by side. |
 | **Analysis** | Sortable event table over the full roster, per-team pages, percentile colouring. |
-| **Review** | TBA match footage beside what your scouts recorded, for auditing data quality. |
+| **Review** | TBA match footage with timestamped markers, beside what your scouts recorded. |
 | **Compare** | Up to six robots head to head, for alliance selection and match strategy. |
 | **Picklist** | Drag-to-order list with tiers and notes. Saves as you type. |
 | **Data** | QR and file transfer in both directions, plus CSV export. |
@@ -105,6 +123,8 @@ Syncing an event caches far more than the schedule:
 | Match results + RP | The Review tab's official score, beside your scouts' numbers |
 | **Match videos** | Embedded footage on team pages and the Review tab |
 | Rankings + record | Rank, W-L-T and ranking score on every team page |
+| Team identity | Nickname, city, rookie year and avatar — searchable by name |
+| Robot photos | The robot itself on each team page |
 | OPR | A second opinion on scoring output, independent of your scouts |
 
 All of it is cached to IndexedDB, so it stays readable with the wifi off. With
@@ -124,6 +144,21 @@ two places:
 Videos are **click-to-play**: only a thumbnail loads until you press play, because a
 page listing a dozen matches should not open a dozen YouTube players on venue wifi.
 Non-YouTube media links out to TBA rather than embedding.
+
+### Marking moments in the video
+
+The Review tab uses YouTube's player API rather than a plain embed, so the page can
+actually drive it: **play/pause**, **−5s / −1s / +1s / +5s** stepping, and **0.25× /
+0.5×** slow motion, with `space` and the arrow keys bound to the same thing.
+
+Pressing **Mark this moment** pauses the video and pins a marker at the current
+timestamp — you noticed something and want it held still while you write it down.
+A marker carries a category (good play, fast cycle, defense, breakdown, penalty,
+note), optionally which robot it is about, and free text. Markers show up as ticks
+on a rail under the video and jump the playhead when clicked.
+
+Markers travel in the transfer bundle like every other record, so a strategy lead
+can collect them from several people reviewing different matches.
 
 ### Auditing your scouts
 
@@ -242,6 +277,7 @@ src/
 │   ├── transfer.ts   #   QR chunking, compression, CSV
 │   └── settings.ts   #   Per-device settings (localStorage)
 ├── components/       # Shared UI primitives
+├── scripts/          # set-key.mjs, deploy.mjs
 ├── features/         # One folder per screen
 │   ├── match/  pit/  super/
 │   ├── analysis/  picklist/
