@@ -8,8 +8,12 @@ export interface ScoutEvent {
   actionId: string
   /** Seconds since the scout pressed Start. */
   t: number
-  /** -1 for an undo of a previous tap, +1 for a tap. */
-  delta: 1 | -1
+  /**
+   * Units added by this tap. Usually the action's `step` (FUEL moves in
+   * fives), negative for a correction. Analysis only ever sums deltas, so a
+   * record written when FUEL stepped by 1 still totals correctly.
+   */
+  delta: number
 }
 
 export interface MatchRecord {
@@ -23,7 +27,8 @@ export interface MatchRecord {
   matchLevel: 'qm' | 'sf' | 'f' | 'pr'
   teamNumber: number
   alliance: Alliance
-  /** 1-3, driver station position. */
+  /** 1-3, position within the alliance as TBA lists it. Derived from the
+   * team the scout picked; 0 when the team was typed by hand. */
   station: number
   scoutName: string
   /** Timestamped taps, the raw source of truth. */

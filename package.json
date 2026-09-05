@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "deploy": "npm run build && node scripts/deploy.mjs",
-    "set-key": "node scripts/set-key.mjs"
+    "set-key": "node scripts/set-key.mjs",
+    "test": "tsx src/lib/__tests__/vision.test.mts"
   },
   "dependencies": {
     "dexie": "^4.0.11",

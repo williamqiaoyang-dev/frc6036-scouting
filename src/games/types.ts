@@ -27,6 +27,12 @@ export interface CounterAction {
   phase: Phase
   /** Points awarded per unit, used for derived scoring estimates. */
   points: number
+  /**
+   * Units recorded per tap, default 1. Game pieces that score in bursts too
+   * fast to tap one-for-one (REBUILT FUEL) use a bigger step; the form still
+   * offers a +/-1 trim so a short burst can be corrected exactly.
+   */
+  step?: number
   /** Groups actions into a visual cluster on the form. */
   group?: string
   /** Marks a miss/failed attempt: excluded from points, used for accuracy. */

@@ -6,6 +6,8 @@ import { getConfig } from './config'
  * an export bundle.
  */
 export interface Settings {
+  /** Which FUEL counting mode this device uses: manual, static, dynamic. */
+  visionMode: string
   scoutName: string
   deviceName: string
   eventKey: string
@@ -16,6 +18,7 @@ export interface Settings {
 }
 
 const KEYS: Record<keyof Settings, string> = {
+  visionMode: 'vision_mode',
   scoutName: 'scout_name',
   deviceName: 'device_name',
   eventKey: 'event_key',
@@ -29,6 +32,7 @@ export function loadSettings(): Settings {
   // pre-configured build works without anyone touching Settings.
   const config = getConfig()
   return {
+    visionMode: localStorage.getItem(KEYS.visionMode) ?? 'manual',
     scoutName: localStorage.getItem(KEYS.scoutName) ?? '',
     deviceName: localStorage.getItem(KEYS.deviceName) ?? '',
     eventKey: localStorage.getItem(KEYS.eventKey) || config.defaultEventKey,
@@ -43,4 +47,25 @@ export function saveSettings(patch: Partial<Settings>) {
     localStorage.setItem(KEYS[key as keyof Settings], String(value))
   }
   window.dispatchEvent(new Event('settings-changed'))
+}
+
+/**
+ * Vision tuning lives beside settings rather than in the database: it
+ * describes this device's camera and where it is pointed, so it must never
+ * travel in an export bundle to another device.
+ */
+export function loadVisionConfig<T>(fallback: T): T {
+  try {
+    const raw = localStorage.getItem('vision_config')
+    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback
+  } catch {
+    // Corrupt or unreadable storage should never stop a scout from working.
+    return fallback
+  }
+}
+
+export function saveVisionConfig(config: unknown) {
+  try {
+    localStorage.setItem('vision_config', JSON.stringify(config))
+  } catch { /* private mode or quota; tuning simply will not persist */ }
 }

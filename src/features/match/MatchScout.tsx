@@ -4,7 +4,10 @@ import { getGame } from '@/games'
 import type { CounterAction, Phase, SelectAction, ToggleAction } from '@/games/types'
 import { db, saveMatch } from '@/lib/db'
 import { matchId, SCHEMA_VERSION, type ScoutEvent, type Alliance } from '@/lib/schema'
-import { loadSettings } from '@/lib/settings'
+import { loadSettings, loadVisionConfig, saveVisionConfig } from '@/lib/settings'
+import { DEFAULT_VISION, type VisionConfig } from '@/lib/vision'
+import type { VisionMode } from '@/lib/ballTracker'
+import { VisionCounter } from '@/features/vision/VisionCounter'
 import { getCachedEvent, teamInfo } from '@/lib/tba'
 import type { CachedEvent } from '@/lib/schema'
 import { Card, Field, Panel, Pill, Toast } from '@/components/ui'
@@ -34,6 +37,8 @@ export default function MatchScout() {
   const [matchNumber, setMatchNumber] = useState(1)
   const [teamNumber, setTeamNumber] = useState<number | ''>('')
   const [alliance, setAlliance] = useState<Alliance>(settings.assignedAlliance || 'red')
+  // The scout picks a team, not a seat number — but which seat they picked is
+  // remembered so the next match pre-fills the same position on the alliance.
   const [station, setStation] = useState(settings.assignedStation || 1)
 
   // -- collected data -------------------------------------------------------
@@ -45,15 +50,63 @@ export default function MatchScout() {
   const [noShow, setNoShow] = useState(false)
   const [notes, setNotes] = useState('')
 
+  // Camera-assisted FUEL counting. The mode and tuning persist per device,
+  // because they depend on that device's camera and where it is pointed.
+  const [visionMode, setVisionMode] = useState<VisionMode>(
+    (settings.visionMode as VisionMode) || 'manual')
+  const [visionConfig, setVisionConfig] = useState<VisionConfig>(
+    () => loadVisionConfig(DEFAULT_VISION))
+
+  function updateVisionConfig(next: VisionConfig) {
+    setVisionConfig(next)
+    saveVisionConfig(next)
+  }
+  function updateVisionMode(next: VisionMode) {
+    setVisionMode(next)
+    localStorage.setItem('vision_mode', next)
+  }
+
+  // Which counter the camera drives, per phase.
+  const visionActionId = phase === 'auto' ? 'auto_fuel_scored' : 'teleop_fuel_scored'
+  const visionAction = useMemo(
+    () => game.actions.find((a): a is CounterAction =>
+      a.kind === 'counter' && a.id === visionActionId),
+    [game, visionActionId],
+  )
+
   useEffect(() => { getCachedEvent(settings.eventKey).then(setEvent) }, [settings.eventKey])
 
-  // Pull the scheduled robot for this station straight from the TBA cache, so
-  // the scout confirms a number instead of typing one under time pressure.
+  const scheduled = useMemo(
+    () => event?.matches.find(
+      (m) => m.matchLevel === matchLevel && m.matchNumber === matchNumber) ?? null,
+    [event, matchLevel, matchNumber],
+  )
+
+  /** The six robots on the field, flattened, in TBA's order. */
+  const lineup = useMemo(() => {
+    if (!scheduled) return [] as { team: number; alliance: Alliance; station: number }[]
+    const out: { team: number; alliance: Alliance; station: number }[] = []
+    for (const a of ['red', 'blue'] as Alliance[]) {
+      scheduled[a]?.forEach((team, i) => out.push({ team, alliance: a, station: i + 1 }))
+    }
+    return out
+  }, [scheduled])
+
+  // Follow the schedule: when the match or alliance changes, jump to whoever
+  // is sitting in the seat this scout was last watching.
   useEffect(() => {
-    const m = event?.matches.find((x) => x.matchLevel === matchLevel && x.matchNumber === matchNumber)
-    const scheduled = m?.[alliance]?.[station - 1]
-    if (scheduled) setTeamNumber(scheduled)
-  }, [event, matchLevel, matchNumber, alliance, station])
+    const seat = lineup.find((r) => r.alliance === alliance && r.station === station)
+    if (seat) setTeamNumber(seat.team)
+  }, [lineup, alliance, station])
+
+  // Picking a robot is the primary act; the alliance and seat follow from it.
+  function pickTeam(team: number) {
+    setTeamNumber(team)
+    const seat = lineup.find((r) => r.team === team)
+    if (seat) { setAlliance(seat.alliance); setStation(seat.station) }
+    else setStation(0)
+  }
+  const [typeTeam, setTypeTeam] = useState(false)
 
   const counters = useMemo(
     () => game.actions.filter((a): a is CounterAction => a.kind === 'counter' && a.phase === phase),
@@ -66,9 +119,13 @@ export default function MatchScout() {
     return t
   }, [events])
 
-  function bump(actionId: string, delta: 1 | -1) {
-    if (delta === -1 && (totals[actionId] ?? 0) <= 0) return
-    setEvents((prev) => [...prev, { actionId, t: round1(clock.now()), delta }])
+  // Deltas are clamped at zero rather than rejected, so a −5 on a count of 3
+  // lands on 0 instead of silently doing nothing.
+  function bump(actionId: string, delta: number) {
+    const current = totals[actionId] ?? 0
+    const d = delta < 0 ? -Math.min(current, -delta) : delta
+    if (d === 0) return
+    setEvents((prev) => [...prev, { actionId, t: round1(clock.now()), delta: d }])
   }
 
   function undoLast() {
@@ -81,7 +138,7 @@ export default function MatchScout() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       if (e.key === 'z' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); undoLast(); return }
       const idx = HOTKEYS.indexOf(e.key)
-      if (idx >= 0 && counters[idx]) { e.preventDefault(); bump(counters[idx].id, 1) }
+      if (idx >= 0 && counters[idx]) { e.preventDefault(); bump(counters[idx].id, counters[idx].step ?? 1) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -145,10 +202,6 @@ export default function MatchScout() {
     setTimeout(() => setToast(null), 2600)
   }
 
-  const scheduled = event?.matches.find(
-    (m) => m.matchLevel === matchLevel && m.matchNumber === matchNumber,
-  )
-
   return (
     <div className="mx-auto max-w-[1600px] space-y-4 p-4 pb-28">
       {/* ---------------------------------------------------------- identity */}
@@ -181,19 +234,60 @@ export default function MatchScout() {
                 <option value="blue">Blue</option>
               </select>
             </Field>
-            <Field label="Station">
-              <select className="input" value={station} onChange={(e) => setStation(Number(e.target.value))}>
-                <option value={1}>1</option><option value={2}>2</option><option value={3}>3</option>
-              </select>
-            </Field>
-            <Field label="Team"
-              hint={teamNumber !== '' && teamInfo(event, Number(teamNumber))?.nickname
-                ? teamInfo(event, Number(teamNumber))!.nickname
-                : scheduled ? 'from the schedule' : undefined}>
-              <input type="number" className="input font-display text-[19px] font-700" value={teamNumber}
-                placeholder="6036"
-                onChange={(e) => setTeamNumber(e.target.value === '' ? '' : Number(e.target.value))} />
-            </Field>
+            {/* Scouts are assigned a robot, not a seat number, so the form asks
+                for the robot. Everything positional is derived from it. */}
+            <div className="sm:col-span-2 lg:col-span-2">
+              {/* The dropdown already carries the nickname; only the typed
+                  fallback needs it spelled out underneath. */}
+              <Field label="Robot"
+                hint={lineup.length > 0 && !typeTeam
+                  ? undefined
+                  : teamInfo(event, Number(teamNumber))?.nickname}>
+                {lineup.length > 0 && !typeTeam ? (
+                  <select
+                    className={clsx('input font-display text-[17px] font-700',
+                      alliance === 'red' ? 'text-alliance-red' : 'text-alliance-blue')}
+                    value={teamNumber}
+                    onChange={(e) => {
+                      if (e.target.value === 'type') { setTypeTeam(true); return }
+                      pickTeam(Number(e.target.value))
+                    }}>
+                    {teamNumber !== '' && !lineup.some((r) => r.team === teamNumber) && (
+                      <option value={teamNumber}>{teamNumber}</option>
+                    )}
+                    {(['red', 'blue'] as Alliance[]).map((a) => (
+                      <optgroup key={a} label={a === 'red' ? 'Red alliance' : 'Blue alliance'}>
+                        {lineup.filter((r) => r.alliance === a).map((r) => (
+                          <option key={r.team} value={r.team}>
+                            {r.team}
+                            {teamInfo(event, r.team)?.nickname
+                              ? ` — ${teamInfo(event, r.team)!.nickname}` : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                    <option value="type">Not on this list — type a number</option>
+                  </select>
+                ) : (
+                  <div className="flex gap-1">
+                    <input type="number" className="input font-display text-[19px] font-700"
+                      value={teamNumber} placeholder="6036"
+                      onChange={(e) => {
+                        const v = e.target.value === '' ? '' : Number(e.target.value)
+                        setTeamNumber(v)
+                        if (v !== '') pickTeam(Number(v))
+                      }} />
+                    {lineup.length > 0 && (
+                      <button type="button" onClick={() => setTypeTeam(false)}
+                        className="shrink-0 rounded-panel border border-deck-500 px-2 text-[12px]
+                                   font-600 text-chalk-faint hover:bg-deck-600 hover:text-chalk">
+                        Schedule
+                      </button>
+                    )}
+                  </div>
+                )}
+              </Field>
+            </div>
             <div className="flex items-end">
               <div className="w-full rounded-panel border border-deck-500 bg-deck-900 px-2.5 py-1.5">
                 <div className="label">Scout</div>
@@ -226,13 +320,33 @@ export default function MatchScout() {
         ))}
       </div>
 
+      {/* ----------------------------------------------------- FUEL counter */}
+      {phase !== 'endgame' && (
+        <VisionCounter
+          mode={visionMode}
+          onModeChange={updateVisionMode}
+          config={visionConfig}
+          onConfigChange={updateVisionConfig}
+          counted={Math.max(0, totals[visionActionId] ?? 0)}
+          label={visionAction?.label ?? 'FUEL scored'}
+          step={visionAction?.step ?? 1}
+          onScore={() => bump(visionActionId, 1)}
+          onManualAdjust={(d) => bump(visionActionId, d)}
+        />
+      )}
+
       {/* ---------------------------------------------------------- counters */}
       {counters.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {counters.map((action, i) => (
-            <Counter key={action.id} action={action} value={Math.max(0, totals[action.id] ?? 0)}
-              hotkey={HOTKEYS[i]} onChange={(d) => bump(action.id, d)} />
-          ))}
+          {counters
+            // The FUEL counter always lives in the panel above — in every
+            // mode, including manual — so a second copy here would invite
+            // double-tapping the same score.
+            .filter((a) => a.id !== visionActionId)
+            .map((action, i) => (
+              <Counter key={action.id} action={action} value={Math.max(0, totals[action.id] ?? 0)}
+                hotkey={HOTKEYS[i]} onChange={(d) => bump(action.id, d)} />
+            ))}
         </div>
       )}
 

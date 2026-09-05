@@ -92,11 +92,15 @@ export default function Settings() {
               <option value="blue">Blue</option>
             </select>
           </Field>
-          <Field label="Assigned station">
+          <Field label="Assigned seat"
+            hint="Which robot on the alliance you usually watch. The match form
+                  pre-selects that robot; you can always pick a different one.">
             <select className="input" value={settings.assignedStation}
               onChange={(e) => set('assignedStation', Number(e.target.value) as any)}>
               <option value={0}>Not assigned</option>
-              <option value={1}>1</option><option value={2}>2</option><option value={3}>3</option>
+              <option value={1}>First robot listed</option>
+              <option value={2}>Second robot listed</option>
+              <option value={3}>Third robot listed</option>
             </select>
           </Field>
         </div>
