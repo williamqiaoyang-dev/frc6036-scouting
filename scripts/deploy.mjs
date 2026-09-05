@@ -21,6 +21,20 @@ const staging = mkdtempSync(join(tmpdir(), 'ghp-'))
 cpSync('dist', staging, { recursive: true })
 writeFileSync(join(staging, '.nojekyll'), '')
 
+// This branch holds compiled output only — no package.json, no source. If a
+// host (Vercel, Netlify) is pointed at it, it must serve these files as-is
+// rather than try to build them; otherwise it looks for `vite` and finds
+// nothing. Prefer pointing such a host at `main`, where the real build lives.
+writeFileSync(
+  join(staging, 'vercel.json'),
+  JSON.stringify({
+    framework: null,
+    buildCommand: "echo 'Pre-built output. Nothing to build on this branch.'",
+    installCommand: "echo 'No dependencies on this branch.'",
+    outputDirectory: '.',
+  }, null, 2) + '\n',
+)
+
 const run = (cmd) => execSync(cmd, { cwd: staging, stdio: 'inherit' })
 run('git init -q')
 run('git checkout -q -b gh-pages')

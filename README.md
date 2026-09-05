@@ -196,6 +196,25 @@ Two rules keep that honest:
 Un-scouted teams are still fully pickable — you draft robots you watched from the stands
 too, and the picklist should not stop you.
 
+## Deploying
+
+Two commands publish everything:
+
+```bash
+npm run set-key -- <your-tba-read-key>   # optional, once
+npm run deploy                            # build + publish to gh-pages
+```
+
+`gh-pages` holds **compiled output only** — no `package.json`, no source. That
+matters if you point a host like Vercel or Netlify at this repo:
+
+- **Point it at `main`** (recommended). The real build lives there, and
+  `vercel.json` / `netlify.toml` already tell it `npm run build` → `dist`.
+- **If it is pointed at `gh-pages`**, it must serve those files as-is. `npm run
+  deploy` writes a `vercel.json` onto that branch which disables the build for
+  exactly this reason — otherwise the host tries to run `vite`, finds no
+  dependencies, and fails with `vite: command not found`.
+
 ## Two design decisions worth knowing
 
 ### 1. Every tap is timestamped
