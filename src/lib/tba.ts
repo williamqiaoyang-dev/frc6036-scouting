@@ -1,0 +1,211 @@
+import { db } from './db'
+import { getConfig } from './config'
+import type { CachedEvent, CachedMatch, CachedRanking, MatchVideo } from './schema'
+
+/**
+ * The Blue Alliance Read API v3.
+ *
+ * Fetches are cached into IndexedDB so the schedule and team list stay
+ * available once the venue wifi inevitably dies. Every read goes through
+ * the cache first and only hits the network when asked to refresh.
+ *
+ * The API key is stored in localStorage (see Settings) — TBA read keys are
+ * per-user and low-sensitivity, but they are still never bundled into the
+ * build. Get one at thebluealliance.com/account.
+ */
+const BASE = 'https://www.thebluealliance.com/api/v3'
+
+/**
+ * A key typed into Settings wins; otherwise fall back to the one shipped in
+ * config.json, so a team can deploy a pre-configured build.
+ */
+export function getTbaKey(): string {
+  return localStorage.getItem('tba_key') || getConfig().tbaApiKey || ''
+}
+export function setTbaKey(key: string) {
+  localStorage.setItem('tba_key', key.trim())
+}
+
+async function tbaFetch<T>(path: string): Promise<T> {
+  const key = getTbaKey()
+  if (!key) throw new Error('No Blue Alliance API key set. Add one in Settings.')
+
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'X-TBA-Auth-Key': key },
+  })
+  if (res.status === 401) throw new Error('Blue Alliance rejected the API key.')
+  if (res.status === 404) throw new Error(`Not found on The Blue Alliance: ${path}`)
+  if (!res.ok) throw new Error(`Blue Alliance error ${res.status}`)
+  return res.json() as Promise<T>
+}
+
+const LEVEL_MAP: Record<string, CachedMatch['matchLevel']> = {
+  qm: 'qm', sf: 'sf', f: 'f', qf: 'sf', ef: 'sf',
+}
+
+/** Strip the `frc` prefix TBA puts on team keys. */
+const teamNum = (key: string) => parseInt(key.replace('frc', ''), 10)
+
+/**
+ * Pull an event's team list, schedule, standings and OPRs, then cache it.
+ *
+ * Uses `/matches` rather than `/matches/simple` because only the full payload
+ * carries `videos` — the match footage links that make the review screen work.
+ * Rankings and OPRs are best-effort: they 404 before qualification play
+ * starts, which is normal and must not fail the whole sync.
+ */
+export async function fetchEvent(eventKey: string): Promise<CachedEvent> {
+  const [info, teams, matches] = await Promise.all([
+    tbaFetch<{ name: string }>(`/event/${eventKey}/simple`),
+    tbaFetch<{ key: string }[]>(`/event/${eventKey}/teams/keys`),
+    tbaFetch<any[]>(`/event/${eventKey}/matches`),
+  ])
+
+  const [rankingData, oprData] = await Promise.all([
+    tbaFetch<any>(`/event/${eventKey}/rankings`).catch(() => null),
+    tbaFetch<any>(`/event/${eventKey}/oprs`).catch(() => null),
+  ])
+
+  const oprs: Record<string, number> = oprData?.oprs ?? {}
+
+  const rankings: CachedRanking[] = (rankingData?.rankings ?? []).map((r: any): CachedRanking => ({
+    teamNumber: teamNum(r.team_key),
+    rank: r.rank,
+    rankingScore: r.sort_orders?.[0] ?? 0,
+    wins: r.record?.wins ?? 0,
+    losses: r.record?.losses ?? 0,
+    ties: r.record?.ties ?? 0,
+    matchesPlayed: r.matches_played ?? 0,
+    opr: oprs[r.team_key] ?? null,
+  }))
+
+  const cached: CachedEvent = {
+    eventKey,
+    name: info.name,
+    teams: teams.map((t: any) => teamNum(typeof t === 'string' ? t : t.key)).sort((a, b) => a - b),
+    matches: matches
+      .filter((m) => LEVEL_MAP[m.comp_level])
+      .map((m): CachedMatch => ({
+        key: m.key,
+        matchNumber: m.comp_level === 'qm' ? m.match_number : m.set_number * 100 + m.match_number,
+        matchLevel: LEVEL_MAP[m.comp_level],
+        red: (m.alliances?.red?.team_keys ?? []).map(teamNum),
+        blue: (m.alliances?.blue?.team_keys ?? []).map(teamNum),
+        redScore: m.alliances?.red?.score ?? null,
+        blueScore: m.alliances?.blue?.score ?? null,
+        predictedTime: m.predicted_time ?? m.time ?? null,
+        videos: (m.videos ?? [])
+          .filter((v: any) => v?.key && (v.type === 'youtube' || v.type === 'tba'))
+          .map((v: any): MatchVideo => ({ key: v.key, type: v.type })),
+        redRp: m.score_breakdown?.red?.rp ?? null,
+        blueRp: m.score_breakdown?.blue?.rp ?? null,
+      }))
+      .sort((a, b) =>
+        a.matchLevel === b.matchLevel
+          ? a.matchNumber - b.matchNumber
+          : ['qm', 'sf', 'f'].indexOf(a.matchLevel) - ['qm', 'sf', 'f'].indexOf(b.matchLevel)),
+    rankings,
+    fetchedAt: Date.now(),
+  }
+
+  await db.events.put(cached)
+  return cached
+}
+
+/** Every cached match a team appears in, newest first. */
+export function teamMatches(event: CachedEvent | null, team: number): CachedMatch[] {
+  if (!event) return []
+  return event.matches
+    .filter((m) => m.red.includes(team) || m.blue.includes(team))
+    .sort(byMostRecent)
+}
+
+/** A team's official standing, if qualification play has started. */
+export function teamRanking(event: CachedEvent | null, team: number): CachedRanking | null {
+  return event?.rankings.find((r) => r.teamNumber === team) ?? null
+}
+
+/** Which alliance a team was on in a match, for result colouring. */
+export function allianceOf(match: CachedMatch, team: number): 'red' | 'blue' | null {
+  if (match.red.includes(team)) return 'red'
+  if (match.blue.includes(team)) return 'blue'
+  return null
+}
+
+/**
+ * Human-readable match label.
+ *
+ * Playoff matches are cached as `set * 100 + match` to keep one sortable
+ * number, so raw values look like "1301". Decode that back into the form
+ * people actually say out loud: SF13, or SF13-2 when a set has replays.
+ */
+export function matchLabel(m: Pick<CachedMatch, 'matchLevel' | 'matchNumber'>): string {
+  if (m.matchLevel === 'qm') return `Q${m.matchNumber}`
+  if (m.matchLevel === 'pr') return `P${m.matchNumber}`
+  const set = Math.floor(m.matchNumber / 100)
+  const num = m.matchNumber % 100
+  if (m.matchLevel === 'f') return `F${num}`
+  return num > 1 ? `SF${set}-${num}` : `SF${set}`
+}
+
+/** Playing order rank, so finals sort after semifinals after quals. */
+export const LEVEL_ORDER: Record<string, number> = { pr: -1, qm: 0, sf: 1, f: 2 }
+
+/** Most recently played first: finals, then semis, then quals. */
+export function byMostRecent(a: CachedMatch, b: CachedMatch): number {
+  const la = LEVEL_ORDER[a.matchLevel] ?? 0
+  const lb = LEVEL_ORDER[b.matchLevel] ?? 0
+  return la === lb ? b.matchNumber - a.matchNumber : lb - la
+}
+
+/** Embeddable URL for a match video. Returns null for unsupported hosts. */
+export function videoEmbedUrl(video: MatchVideo): string | null {
+  // `tba`-type keys point at TBA's own player, which does not expose an
+  // embed endpoint, so only YouTube is embeddable.
+  if (video.type !== 'youtube') return null
+  // TBA sometimes stores "id?t=123" to deep-link a timestamp.
+  const [id, query] = video.key.split('?')
+  const start = new URLSearchParams(query ?? '').get('t')
+  const params = new URLSearchParams({ rel: '0', modestbranding: '1' })
+  if (start) params.set('start', start.replace(/[^0-9]/g, ''))
+  return `https://www.youtube-nocookie.com/embed/${id}?${params}`
+}
+
+/** Watch-on-YouTube link, for when embedding is blocked. */
+export function videoWatchUrl(video: MatchVideo): string {
+  if (video.type === 'youtube') {
+    return `https://www.youtube.com/watch?v=${video.key.split('?')[0]}`
+  }
+  return `https://www.thebluealliance.com/match/${video.key}`
+}
+
+/** Cached copy, or null if this event has never been fetched. */
+export async function getCachedEvent(eventKey: string): Promise<CachedEvent | null> {
+  return (await db.events.get(eventKey)) ?? null
+}
+
+/** Every event cached locally, newest fetch first. */
+export async function listCachedEvents(): Promise<CachedEvent[]> {
+  return db.events.orderBy('fetchedAt').reverse().toArray()
+}
+
+/** Events a team is registered for in a given year — used by the event picker. */
+export async function fetchTeamEvents(team: number, year: number) {
+  const events = await tbaFetch<any[]>(`/team/frc${team}/events/${year}/simple`)
+  return events
+    .map((e) => ({ key: e.key, name: e.name, start: e.start_date }))
+    .sort((a, b) => a.start.localeCompare(b.start))
+}
+
+/** The three robots on a given alliance in a given match, from cache. */
+export function allianceTeams(
+  event: CachedEvent | null,
+  level: string,
+  matchNumber: number,
+  alliance: 'red' | 'blue',
+): number[] {
+  const match = event?.matches.find(
+    (m) => m.matchLevel === level && m.matchNumber === matchNumber,
+  )
+  return match ? match[alliance] : []
+}

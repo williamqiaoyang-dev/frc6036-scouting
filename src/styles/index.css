@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root { color-scheme: dark; }
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-surface-0 text-slate-200 font-sans antialiased;
+    /* Scouts tap fast and repeatedly; never let the browser select text or
+       zoom on a double-tap mid-match. */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  ::selection { @apply bg-peninsula-600/40; }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-white/10 bg-surface-1/80 backdrop-blur;
+  }
+  .label {
+    @apply text-[11px] font-semibold uppercase tracking-wider text-slate-500;
+  }
+  .input {
+    @apply w-full rounded-lg border border-white/10 bg-surface-0 px-3 py-2 text-sm
+           text-slate-100 outline-none transition
+           placeholder:text-slate-600
+           focus:border-peninsula-500 focus:ring-2 focus:ring-peninsula-500/25;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2
+           text-sm font-semibold transition active:scale-[.98]
+           disabled:pointer-events-none disabled:opacity-40;
+  }
+  .btn-primary { @apply btn bg-peninsula-600 text-white hover:bg-peninsula-500; }
+  .btn-ghost   { @apply btn border border-white/10 text-slate-300 hover:bg-white/5; }
+  .btn-danger  { @apply btn bg-rose-600/90 text-white hover:bg-rose-500; }
+}
+
+/* The counter buttons are the single most-used control in the app.
+   No text selection, no callout, no scroll-jank while tapping. */
+.tap-target {
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}

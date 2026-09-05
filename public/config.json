@@ -1,0 +1,26 @@
+{
+  "$comment": [
+    "Deployment config for 6036 Scouting. Edit this file, rebuild (or just",
+    "redeploy dist/), and every device picks up the same defaults instead of",
+    "each scout typing them in.",
+    "",
+    "Anything a scout changes in Settings is stored per-device and overrides",
+    "what is here.",
+    "",
+    "SECURITY: tbaApiKey is served to anyone who can load the app, so only put",
+    "one here for a deployment you control (a team laptop, a LAN server, a",
+    "private host). For a public URL, leave it empty and have scouts paste a",
+    "key in Settings. TBA read keys are read-only and revocable from your TBA",
+    "account dashboard."
+  ],
+
+  "team": 6036,
+  "teamName": "Peninsula Robotics",
+
+  "tbaApiKey": "",
+  "defaultEventKey": "",
+
+  "gameId": "rebuilt2026",
+
+  "autoSyncOnLaunch": true
+}
