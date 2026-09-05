@@ -16,6 +16,28 @@ export interface ScoutEvent {
   delta: number
 }
 
+/**
+ * One burst of shooting: when it started and stopped, and how much of the
+ * magazine went out.
+ *
+ * Counting 100-300 individual FUEL by hand is not something a person can do
+ * accurately, so this records what a person *can* judge — when a robot was
+ * firing, and roughly how much of its hopper it emptied — and derives the
+ * ball count from that and the magazine size the pit crew measured.
+ */
+export interface Volley {
+  /** Seconds from match start. */
+  start: number
+  end: number
+  /** Share of the magazine emptied, 0-100. */
+  fillPct: number
+  /** Magazine size assumed when recorded, so the estimate can be redone
+   *  later if the pit survey corrects it. */
+  magazine: number
+  /** Balls this volley is estimated to have fired. */
+  balls: number
+}
+
 export interface MatchRecord {
   /** Deterministic id: `${eventKey}_${matchNumber}_${team}`. Re-scouting overwrites. */
   id: string
@@ -33,6 +55,8 @@ export interface MatchRecord {
   scoutName: string
   /** Timestamped taps, the raw source of truth. */
   events: ScoutEvent[]
+  /** Bursts of shooting, when the scout recorded volleys rather than taps. */
+  volleys?: Volley[]
   /** Final values for select/toggle actions, keyed by action id. */
   states: Record<string, string | boolean>
   /** Did the robot stop moving at any point? */

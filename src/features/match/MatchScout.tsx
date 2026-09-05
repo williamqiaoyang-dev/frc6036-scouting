@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import { getGame } from '@/games'
 import type { CounterAction, Phase, SelectAction, ToggleAction } from '@/games/types'
 import { db, saveMatch } from '@/lib/db'
-import { matchId, SCHEMA_VERSION, type ScoutEvent, type Alliance } from '@/lib/schema'
+import { matchId, pitId, SCHEMA_VERSION, type ScoutEvent, type Alliance, type Volley } from '@/lib/schema'
 import { loadDetectors, loadSettings, saveDetectors } from '@/lib/settings'
 import type { Detector, DetectorEvent } from '@/lib/detectors'
 import { VisionCounter, type CameraMode } from '@/features/vision/VisionCounter'
@@ -11,6 +11,7 @@ import { getCachedEvent, teamInfo } from '@/lib/tba'
 import type { CachedEvent } from '@/lib/schema'
 import { Card, Field, Panel, Pill, Toast } from '@/components/ui'
 import { Counter } from './Counter'
+import { VolleyRecorder } from './VolleyRecorder'
 import { MatchTimer, useMatchClock } from './MatchTimer'
 
 const PHASES: { id: Phase; label: string }[] = [
@@ -48,6 +49,12 @@ export default function MatchScout() {
   const [diedOnField, setDied] = useState(false)
   const [noShow, setNoShow] = useState(false)
   const [notes, setNotes] = useState('')
+
+  // Volley scouting: bursts of fire rather than individual balls. The
+  // magazine size comes from the pit survey, which is the one place anyone
+  // has actually measured it.
+  const [volleys, setVolleys] = useState<Volley[]>([])
+  const [magazine, setMagazine] = useState(40)
 
   // Camera-assisted scouting. The mode and every detector's setup persist
   // per device, because they depend on that device's camera and where it is
@@ -98,6 +105,15 @@ export default function MatchScout() {
   )
 
   useEffect(() => { getCachedEvent(settings.eventKey).then(setEvent) }, [settings.eventKey])
+
+  // Pull this robot's measured FUEL capacity forward from the pit survey.
+  useEffect(() => {
+    if (teamNumber === '') return
+    db.pits.get(pitId(settings.eventKey, Number(teamNumber))).then((pit) => {
+      const cap = Number(pit?.fields?.fuel_capacity)
+      if (Number.isFinite(cap) && cap > 0) setMagazine(cap)
+    })
+  }, [teamNumber, settings.eventKey])
 
   const scheduled = useMemo(
     () => event?.matches.find(
@@ -151,6 +167,38 @@ export default function MatchScout() {
     setEvents((prev) => [...prev, { actionId, t: round1(clock.now()), delta: d }])
   }
 
+  /**
+   * A volley is kept in full and also added to the FUEL counter, so every
+   * existing chart and picklist keeps working without knowing volleys
+   * exist — while the raw bursts stay on the record, ready to be re-derived
+   * if the pit crew corrects the magazine size later.
+   */
+  function commitVolley(v: Volley) {
+    setVolleys((prev) => [...prev, v])
+    setEvents((prev) => [...prev, {
+      actionId: fuelActionAt(v.start),
+      t: round1(v.end),
+      delta: v.balls,
+    }])
+  }
+
+  function removeVolley(index: number) {
+    const v = volleys[index]
+    setVolleys((prev) => prev.filter((_, i) => i !== index))
+    if (v) bump(fuelActionAt(v.start), -v.balls)
+  }
+
+  /**
+   * Which FUEL counter a volley belongs to, decided by when it happened
+   * rather than which tab the scout happens to be looking at. A burst that
+   * runs over the AUTO boundary is still an AUTO burst, and the scout
+   * should not have to think about that while holding a button.
+   */
+  function fuelActionAt(seconds: number): string {
+    const w = game.windows.find((x) => seconds >= x.startSec && seconds < x.endSec)
+    return (w?.phase ?? phase) === 'auto' ? 'auto_fuel_scored' : 'teleop_fuel_scored'
+  }
+
   function undoLast() {
     setEvents((prev) => prev.slice(0, -1))
   }
@@ -196,6 +244,7 @@ export default function MatchScout() {
       station,
       scoutName: settings.scoutName || 'anonymous',
       events,
+      volleys,
       states,
       diedOnField,
       noShow,
@@ -212,6 +261,7 @@ export default function MatchScout() {
 
   function resetForNextMatch() {
     setEvents([])
+    setVolleys([])
     setStates(initialStates(game))
     setDefenseRating(0); setDriverRating(0)
     setDied(false); setNoShow(false); setNotes('')
@@ -355,6 +405,17 @@ export default function MatchScout() {
           label={visionAction?.label ?? 'FUEL scored'}
           step={visionAction?.step ?? 1}
           onManualAdjust={(d) => bump(visionActionId, d)}
+          volleyPanel={
+            <VolleyRecorder
+              volleys={volleys}
+              magazine={magazine}
+              onMagazineChange={setMagazine}
+              onCommit={commitVolley}
+              onRemove={removeVolley}
+              now={clock.now}
+              running={clock.running}
+            />
+          }
         />
       )}
 

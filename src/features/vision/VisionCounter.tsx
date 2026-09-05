@@ -8,7 +8,7 @@ import { DetectorTuning } from './DetectorTuning'
 import { drawDetectorOverlay, type Point } from './overlay'
 import { useDetectors } from './useDetectors'
 
-export type CameraMode = 'manual' | 'static' | 'dynamic'
+export type CameraMode = 'manual' | 'static' | 'dynamic' | 'volley'
 
 /**
  * Camera-assisted scouting during a live match.
@@ -28,6 +28,7 @@ export type CameraMode = 'manual' | 'static' | 'dynamic'
 export function VisionCounter({
   mode, onModeChange, detectors, onDetectorsChange, onEvent,
   counted, onManualAdjust, step = 1, label, fuelDetectorId = 'fuel_scored',
+  volleyPanel,
 }: {
   mode: CameraMode
   onModeChange: (m: CameraMode) => void
@@ -39,6 +40,8 @@ export function VisionCounter({
   step?: number
   label: string
   fuelDetectorId?: string
+  /** Rendered instead of the camera when counting by volleys. */
+  volleyPanel?: React.ReactNode
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
@@ -56,7 +59,7 @@ export function VisionCounter({
   const [draft, setDraft] = useState<Point[]>([])
   const [tuned, setTuned] = useState(fuelDetectorId)
 
-  const active = mode !== 'manual'
+  const active = mode === 'static' || mode === 'dynamic'
   const armed = detectors.filter((d) => d.enabled && d.zone.length >= 3)
 
   const { detections, fps, sampleAt, reset, processFrame, procWidth, procHeight } =
@@ -176,7 +179,8 @@ export function VisionCounter({
 
   const hitRecently = Date.now() - lastHit < 350
   const modes: [CameraMode, string, string][] = [
-    ['manual', 'Manual count', 'Tap it yourself.'],
+    ['manual', 'Tap', 'Count the balls yourself, five at a time.'],
+    ['volley', 'Volleys', 'Hold while it fires, then say how much of the magazine went out.'],
     ['static', 'AI static', 'Counts the moment a ball reaches the goal. For a fixed camera.'],
     ['dynamic', 'AI dynamic', 'Counts when a ball reaches the goal and vanishes into it.'],
   ]
@@ -295,10 +299,12 @@ export function VisionCounter({
         </div>
       )}
 
+      {mode === 'volley' && volleyPanel}
+
       {mode === 'manual' && (
         <p className="text-[12px] leading-snug text-chalk-faint">
-          Tap the counter as FUEL scores. Switch to a camera mode to have the app
-          count for you.
+          Tap the counter as FUEL scores, five a tap. Switch to Volleys if it shoots
+          faster than you can tap, or to a camera mode to have the app count for you.
         </p>
       )}
     </Panel>

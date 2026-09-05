@@ -32,6 +32,10 @@ export default function MatchReview() {
   const [player, setPlayer] = useState<PlayerHandle | null>(null)
   const [markers, setMarkers] = useState<MarkerRecord[]>([])
   const [markerBump, setMarkerBump] = useState(0)
+  // Once a readable source is open, the custom player is the player — two of
+  // them fighting over the same match is worse than either alone.
+  const [filmOpen, setFilmOpen] = useState(false)
+  const [filmPlayer, setFilmPlayer] = useState<PlayerHandle | null>(null)
 
   useEffect(() => {
     db.events.get(settings.eventKey).then((e) => setEvent(e ?? null))
@@ -54,7 +58,7 @@ export default function MatchReview() {
   }, [selected, markerBump])
 
   // A new video means the old player handle is gone.
-  useEffect(() => { setPlayer(null) }, [selected?.key])
+  useEffect(() => { setPlayer(null); setFilmOpen(false) }, [selected?.key])
 
   useEffect(() => {
     if (!selected) { setRecords([]); return }
@@ -129,35 +133,54 @@ export default function MatchReview() {
       {/* ----------------------------------------------------------- detail */}
       {selected && (
         <div className="space-y-4">
-          {selected.videos.find((v) => v.type === 'youtube') ? (
-            <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
-              <VideoPlayer
-                videoId={selected.videos.find((v) => v.type === 'youtube')!.key.split('?')[0]}
-                markers={markers}
-                onReady={setPlayer}
-              />
+          {!filmOpen && (
+            selected.videos.find((v) => v.type === 'youtube') ? (
+              <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
+                <VideoPlayer
+                  videoId={selected.videos.find((v) => v.type === 'youtube')!.key.split('?')[0]}
+                  markers={markers}
+                  onReady={setPlayer}
+                />
+                <Card className="max-h-[70vh] overflow-y-auto">
+                  <MarkerPanel
+                    match={selected}
+                    eventKey={settings.eventKey}
+                    author={settings.scoutName || 'anonymous'}
+                    player={player}
+                    markers={markers}
+                    onChange={() => setMarkerBump((n) => n + 1)}
+                  />
+                </Card>
+              </div>
+            ) : (
+              <MatchVideo match={selected} label={matchLabel(selected)} />
+            )
+          )}
+
+          <div className={clsx('grid gap-4', filmOpen && 'xl:grid-cols-[1fr_340px]')}>
+            <FilmAnalyzer
+              match={selected}
+              eventKey={settings.eventKey}
+              author={settings.scoutName || 'anonymous'}
+              scoutedFuel={scoutedFuel}
+              markers={markers}
+              onMarkersChanged={() => setMarkerBump((n) => n + 1)}
+              onSourceChange={setFilmOpen}
+              onPlayerReady={setFilmPlayer}
+            />
+            {filmOpen && (
               <Card className="max-h-[70vh] overflow-y-auto">
                 <MarkerPanel
                   match={selected}
                   eventKey={settings.eventKey}
                   author={settings.scoutName || 'anonymous'}
-                  player={player}
+                  player={filmPlayer}
                   markers={markers}
                   onChange={() => setMarkerBump((n) => n + 1)}
                 />
               </Card>
-            </div>
-          ) : (
-            <MatchVideo match={selected} label={matchLabel(selected)} />
-          )}
-
-          <FilmAnalyzer
-            match={selected}
-            eventKey={settings.eventKey}
-            author={settings.scoutName || 'anonymous'}
-            scoutedFuel={scoutedFuel}
-            onMarkersChanged={() => setMarkerBump((n) => n + 1)}
-          />
+            )}
+          </div>
 
           {/* Official score from TBA */}
           <Card>

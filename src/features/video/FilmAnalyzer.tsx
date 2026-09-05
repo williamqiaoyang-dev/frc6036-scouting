@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { getGame } from '@/games'
 import { saveMarker } from '@/lib/db'
-import { markerId, SCHEMA_VERSION, type CachedMatch } from '@/lib/schema'
+import { markerId, SCHEMA_VERSION, type CachedMatch, type MarkerRecord } from '@/lib/schema'
 import { loadDetectors, loadSettings, saveDetectors } from '@/lib/settings'
 import type { Detector, DetectorEvent } from '@/lib/detectors'
 import { videoWatchUrl } from '@/lib/tba'
 import { formatTime } from '@/lib/youtube'
 import { Panel } from '@/components/ui'
+import { MARKER_COLORS, type PlayerHandle } from './VideoPlayer'
 import { DetectorList, detectorColor } from '@/features/vision/DetectorList'
 import { DetectorTuning } from '@/features/vision/DetectorTuning'
 import { drawDetectorOverlay, type Point } from '@/features/vision/overlay'
@@ -16,6 +17,7 @@ import { useDetectors } from '@/features/vision/useDetectors'
 type Source =
   | { kind: 'none' }
   | { kind: 'file'; url: string; name: string }
+  | { kind: 'url'; url: string }
   | { kind: 'screen'; stream: MediaStream }
 
 interface Hit extends DetectorEvent { key: number; team: number | null }
@@ -39,12 +41,19 @@ interface Hit extends DetectorEvent { key: number; team: number | null }
  */
 export function FilmAnalyzer({
   match, eventKey, author, scoutedFuel, onMarkersChanged,
+  markers = [], onSourceChange, onPlayerReady,
 }: {
   match: CachedMatch
   eventKey: string
   author: string
   scoutedFuel: Record<number, number>
   onMarkersChanged: () => void
+  /** Hand-made markers, drawn on the same rail as detections. */
+  markers?: MarkerRecord[]
+  /** Tells the page a readable source is open, so it can retire the iframe. */
+  onSourceChange?: (active: boolean) => void
+  /** Lets the marker panel drive this player like the YouTube one. */
+  onPlayerReady?: (handle: PlayerHandle | null) => void
 }) {
   const settings = loadSettings()
   const game = getGame(settings.gameId)
@@ -78,7 +87,7 @@ export function FilmAnalyzer({
 
   const teams = useMemo(() => [...match.red, ...match.blue], [match])
   const live = source.kind !== 'none'
-  const seekable = source.kind === 'file'
+  const seekable = source.kind === 'file' || source.kind === 'url'
   const armed = detectors.filter((d) => d.enabled && d.zone.length >= 3)
 
   function setDetectors(next: Detector[]) {
@@ -111,6 +120,18 @@ export function FilmAnalyzer({
     setSource({ kind: 'file', url: URL.createObjectURL(file), name: file.name })
   }
 
+  function openUrl() {
+    const url = window.prompt(
+      'Direct link to a video file (.mp4 / .webm).\n\n'
+      + 'This must be the file itself, not a YouTube or Drive viewer page, and the '
+      + 'host has to allow other sites to read it (CORS). Your team\'s own uploads '
+      + 'usually work; YouTube links never will.')
+    if (!url) return
+    releaseSource()
+    setHits([]); setError(''); setSaved(0)
+    setSource({ kind: 'url', url: url.trim() })
+  }
+
   async function shareTab() {
     releaseSource()
     setHits([]); setError(''); setSaved(0)
@@ -140,11 +161,31 @@ export function FilmAnalyzer({
 
   useEffect(() => () => releaseSource(), [])
 
+  useEffect(() => { onSourceChange?.(source.kind !== 'none') }, [source.kind])
+
+  // The marker panel drives whichever player is on screen, so pinning a
+  // moment works the same whether you are on TBA footage or your own.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || source.kind === 'none') { onPlayerReady?.(null); return }
+    onPlayerReady?.({
+      play: () => { v.play().catch(() => {}) },
+      pause: () => v.pause(),
+      seekTo: (secs: number) => { if (seekable) v.currentTime = secs },
+      currentTime: () => v.currentTime,
+    })
+    return () => onPlayerReady?.(null)
+  }, [source.kind, seekable])
+
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-    if (source.kind === 'file') {
+    if (source.kind === 'file' || source.kind === 'url') {
       v.srcObject = null
+      // Needed for a remote file: without it the canvas is tainted and the
+      // detectors get nothing, which is the whole reason we are here.
+      if (source.kind === 'url') v.crossOrigin = 'anonymous'
+      else v.removeAttribute('crossorigin')
       v.src = source.url
       v.load()
     } else if (source.kind === 'screen') {
@@ -327,6 +368,12 @@ export function FilmAnalyzer({
               : 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk')}>
           Open a video file
         </button>
+        <button type="button" onClick={openUrl}
+          className={clsx('h-8 rounded-panel border px-3 text-[13px] font-600 transition',
+            source.kind === 'url' ? 'border-signal bg-signal/15 text-signal'
+              : 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk')}>
+          Video URL
+        </button>
         <button type="button" onClick={shareTab}
           className={clsx('h-8 rounded-panel border px-3 text-[13px] font-600 transition',
             source.kind === 'screen' ? 'border-signal bg-signal/15 text-signal'
@@ -351,18 +398,23 @@ export function FilmAnalyzer({
       {!live && (
         <div className="rounded-panel border border-deck-600 bg-deck-900 p-3">
           <p className="text-[13px] leading-relaxed text-chalk-dim">
-            The player above is a YouTube iframe, and a page cannot read the pixels of
-            another site's frame — so nothing can read shots off it directly, whatever
-            the season. Two ways round that:
+            Pick a source and this replaces the embed above with a real player —
+            frame-stepping, an overlay, and detectors reading the picture. TBA footage
+            can only be embedded, never read: a page cannot touch the pixels inside
+            another site's frame, in any season. So the readable sources are:
           </p>
           <ul className="mt-2 space-y-1 text-[13px] leading-relaxed text-chalk-dim">
             <li>
               <span className="font-600 text-chalk">Open a video file</span> — your own
-              recording from the stands. Scrub, re-tune and re-scan until it is right.
+              recording from the stands. Best option: fully scrubbable, nothing to configure.
+            </li>
+            <li>
+              <span className="font-600 text-chalk">Video URL</span> — a direct link to an
+              .mp4 or .webm your team hosts. The host must allow other sites to read it.
             </li>
             <li>
               <span className="font-600 text-chalk">Share a tab</span> — open this match on
-              YouTube, come back, share that tab, and play it there.
+              YouTube, come back, share that tab, and play it there. Live only.
             </li>
           </ul>
         </div>
@@ -428,6 +480,14 @@ export function FilmAnalyzer({
                 <input type="range" min={0} max={duration} step={0.05} value={time}
                   onChange={(e) => { const v = videoRef.current; if (v) v.currentTime = Number(e.target.value) }}
                   className="absolute inset-x-0 top-1.5 w-full accent-signal" />
+                {markers.map((m) => (
+                  <button key={m.id} type="button"
+                    onClick={() => { const v = videoRef.current; if (v) v.currentTime = m.t }}
+                    title={`${formatTime(m.t)} · ${m.tag}${m.note ? ` — ${m.note}` : ''}`}
+                    style={{ left: `${Math.min(99, (m.t / duration) * 100)}%` }}
+                    className={clsx('absolute bottom-0 h-2 w-1 -translate-x-1/2',
+                      MARKER_COLORS[m.tag] ?? 'bg-slate-400')} />
+                ))}
                 {hits.map((h) => (
                   <button key={h.key} type="button"
                     onClick={() => { const v = videoRef.current; if (v) v.currentTime = h.t }}
