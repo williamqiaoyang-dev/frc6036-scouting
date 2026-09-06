@@ -1,0 +1,27 @@
+{
+  "$comment": [
+    "Deployment config for 6036 Scouting. Edit this file, rebuild (or just",
+    "redeploy dist/), and every device picks up the same defaults instead of",
+    "each scout typing them in.",
+    "",
+    "Anything a scout changes in Settings is stored per-device and overrides",
+    "what is here.",
+    "",
+    "SECURITY: tbaApiKey below is served to anyone who opens the site, even",
+    "though the GitHub repo is private -- GitHub Pages sites are public. This",
+    "is a deliberate tradeoff so the team never has to type a key. It is a TBA",
+    "*read* key: it can only read public FRC data, cannot write anything, and",
+    "can be regenerated instantly at thebluealliance.com/account if it is ever",
+    "abused. Rotate it there and redeploy to invalidate the old one."
+  ],
+
+  "team": 6036,
+  "teamName": "Peninsula Robotics",
+
+  "tbaApiKey": "",
+  "defaultEventKey": "",
+
+  "gameId": "rebuilt2026",
+
+  "autoSyncOnLaunch": true
+}

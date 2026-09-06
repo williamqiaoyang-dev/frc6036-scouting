@@ -1,0 +1,6 @@
+{
+  "framework": null,
+  "buildCommand": "echo 'Pre-built output. Nothing to build on this branch.'",
+  "installCommand": "echo 'No dependencies on this branch.'",
+  "outputDirectory": "."
+}
