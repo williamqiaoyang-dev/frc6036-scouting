@@ -42,6 +42,10 @@ const FUEL_LOOK = {
   // cut in half — and is still under the spacing of two balls in flight.
   edgeSlack: 1.9, close: 2, blurTolerance: 2.6,
   groundY: 0.85,
+  // Off by default: where the back of the field falls in frame depends
+  // entirely on where the camera is, and a guess here silently deletes real
+  // shots. The panel offers to set it the moment stray hits show up high.
+  ceilingY: 0,
 }
 
 /**
@@ -73,6 +77,13 @@ const base = {
   minHits: 2,
   minApproach: 0.55,
   minSpeedPx: 0.6,
+  /**
+   * Balls that never move are scenery — in a rack, a hopper, or the far end
+   * of the field. Two seconds is far longer than a ball is ever motionless
+   * in play, and shorter than a scout would wait to notice the problem.
+   */
+  scenerySec: 2,
+  ignore: [] as { x: number; y: number }[][],
 }
 
 /**

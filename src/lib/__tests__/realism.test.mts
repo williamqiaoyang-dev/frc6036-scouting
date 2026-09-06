@@ -6,7 +6,8 @@
 // break the same way twice.
 import { detectBlobs, roundness, sampleHue, rgbToHsv } from '../vision.ts'
 import { Tracker, headingTowards } from '../tracker.ts'
-import { learnRobot, RobotWatcher, attributeShot, creditEvent } from '../robotLock.ts'
+import { learnRobot, RobotFleet, attributeShot, creditEvent, allianceLook } from '../robotLock.ts'
+import { proposeZone, explainFailure } from '../autoZone.ts'
 import { DetectorEngine, type Detector } from '../detectors.ts'
 
 // The processing resolution the app actually uses.
@@ -225,65 +226,224 @@ console.log('\n5. Tracking: the same ball, not a new one every frame')
   check('two sightings are', t.confirmed.length === 1)
 }
 
-console.log('\n6. Following one robot, and crediting its shots')
+console.log('\n6. Rejecting what is not in play')
 {
-  // Two robots of the same alliance colour, one either side of the field.
-  const frameAt = (mineX: number, otherX: number, shot?: { x: number; y: number }) => {
+  // The complaint that started this: game pieces at the back of the field,
+  // in the far hopper and behind the guardrail are exactly the right colour
+  // and were counted as live balls.
+  const withBackground = () => {
     const f = blank()
-    slab(f, mineX, 250, 42, 17)
-    slab(f, otherX, 250, 42, 17)
-    if (shot) ball(f, shot.x, shot.y, 8)
+    // A rack of balls across the back of the field.
+    for (let i = 0; i < 6; i++) ball(f, 120 + i * 40, 40, 5)
     return f
   }
 
-  const first = frameAt(160, 470)
-  const learned = learnRobot(first, 160 / W, 250 / H)
-  check('learns a robot from one click', !!learned)
-  check('and measures its size rather than guessing',
-    !!learned && learned.appearance.maxRadius < 90 && learned.appearance.minRadius >= 2,
-    learned ? `${learned.appearance.minRadius}-${learned.appearance.maxRadius}` : '')
-  // The bumpers are 84x34, so the minor half-axis is 17 — about 2.7% of the
-  // frame width. A seed at a guessed size makes the first search window the
-  // wrong shape and the shot catchment the wrong size.
-  check('and reports that size for the follow to start from',
-    !!learned && Math.abs(learned.radius - 17 / W) < 0.012,
-    learned ? learned.radius.toFixed(4) : '')
+  // 6a. A ceiling line excludes the back of the field outright.
+  const plain = detectBlobs(withBackground(), FUEL)
+  check('without a ceiling, the back rack is all detected', plain.length === 6,
+    `got ${plain.length}`)
+  const capped = detectBlobs(withBackground(), { ...FUEL, ceilingY: 0.2 })
+  check('a ceiling line removes them', capped.length === 0, `got ${capped.length}`)
+  // ...and must not remove the ball that is in play below it.
+  const f = withBackground(); ball(f, 320, 180, 8)
+  const kept = detectBlobs(f, { ...FUEL, ceilingY: 0.2 })
+  check('while keeping the ball in play', kept.length === 1, `got ${kept.length}`)
+}
+{
+  // 6b. Scenery: a ball that never moves is furniture, whatever its colour.
+  const goal = [{ x: 0.1, y: 0.05 }, { x: 0.9, y: 0.05 },
+                { x: 0.9, y: 0.6 }, { x: 0.1, y: 0.6 }]
+  const det = (over: Partial<Detector>): Detector => ({
+    id: 'd', label: 'd', hint: '', enabled: true,
+    target: { kind: 'counter', byPhase: { teleop: 'x' } },
+    appearance: FUEL, zone: goal, rule: 'enter',
+    step: 1, dwellSec: 2, stillPx: 6, cooldownMs: 200,
+    maxMissedFrames: 5, minTravelPx: 20, confidence: 'high', minHits: 2,
+    ...over,
+  } as Detector)
 
-  if (learned) {
-    const look = learned.appearance
-    const watcher = new RobotWatcher()
-    watcher.setLock({ team: 6036, alliance: 'red', appearance: look })
-    watcher.seed(160 / W, 250 / H, learned.radius, 0)
-
-    // Mine drives right, the other drives left, and they pass each other.
-    let followed = 0
-    for (let i = 0; i < 24; i++) {
-      const mineX = 160 + i * 8
-      const s = watcher.update(frameAt(mineX, 470 - i * 8), W, H, i * 33)
-      if (s && Math.abs(s.x * W - mineX) < 40) followed++
-    }
-    check('follows the robot it was pointed at, past an identical one',
-      followed >= 20, `${followed}/24`)
-
-    // A shot that left my robot at t=10 frames, judged where it started.
-    const mineAt10 = (160 + 10 * 8) / W
-    const mine = attributeShot(watcher, mineAt10, 250 / H, 10 * 33)
-    check('credits a ball that set off from the tracked robot', !!mine?.matched,
-      mine ? mine.distance.toFixed(3) : 'no verdict')
-
-    // A shot that left the other robot at the same moment.
-    const theirsAt10 = (470 - 10 * 8) / W
-    const theirs = attributeShot(watcher, theirsAt10, 250 / H, 10 * 33)
-    check('does not credit a ball that set off from the other robot',
-      !!theirs && !theirs.matched, theirs ? theirs.distance.toFixed(3) : 'no verdict')
-
-    // Nothing is known about a moment the lock was not running.
-    check('says nothing about a moment it was not watching',
-      attributeShot(watcher, 0.5, 0.5, 60_000) === null)
+  const still = (d: Detector) => {
+    const e = new DetectorEngine([d])
+    let n = 0
+    for (let i = 0; i < 90; i++) n += e.update(ball(blank(), 300, 80, 7), W, H, i * 33).length
+    return n
   }
+  check('a motionless ball fires once without scenery suppression',
+    still(det({})) === 1)
+  check('and never with it', still(det({ scenerySec: 1 })) === 0)
+
+  // A ball that is actually moving must still count.
+  const e = new DetectorEngine([det({ scenerySec: 1 })])
+  let fired = 0
+  for (let i = 0; i < 40; i++) {
+    fired += e.update(ball(blank(), 60 + i * 14, 300 - i * 6, 7), W, H, i * 33).length
+  }
+  check('a moving ball still counts with scenery suppression on', fired === 1, `got ${fired}`)
+}
+{
+  // 6c. Ignore areas: the scout says where not to look.
+  const goal = [{ x: 0.05, y: 0.02 }, { x: 0.95, y: 0.02 },
+                { x: 0.95, y: 0.9 }, { x: 0.05, y: 0.9 }]
+  const base: Detector = {
+    id: 'd', label: 'd', hint: '', enabled: true,
+    target: { kind: 'counter', byPhase: { teleop: 'x' } },
+    appearance: FUEL, zone: goal, rule: 'enter',
+    step: 1, dwellSec: 2, stillPx: 6, cooldownMs: 200,
+    maxMissedFrames: 5, minTravelPx: 20, confidence: 'high', minHits: 2,
+  } as Detector
+  const f = blank()
+  ball(f, 100, 80, 7)   // in the corner we will mask off
+  ball(f, 400, 200, 7)  // in play
+  const open = new DetectorEngine([base])
+  open.observe(f, W, H)
+  check('both balls are seen without a mask', open.detections()[0].detections.length === 2)
+
+  const masked = new DetectorEngine([{ ...base,
+    ignore: [[{ x: 0.05, y: 0.05 }, { x: 0.35, y: 0.05 },
+              { x: 0.35, y: 0.4 }, { x: 0.05, y: 0.4 }]] }])
+  masked.observe(f, W, H)
+  check('an ignore area removes only the one inside it',
+    masked.detections()[0].detections.length === 1,
+    `got ${masked.detections()[0].detections.length}`)
 }
 
-console.log('\n7. End to end: a shot, found and credited, off one pass')
+console.log('\n7. Proposing the goal from where balls end')
+{
+  // Twenty shots that all vanish around the same opening, plus noise
+  // elsewhere. The proposal should land on the opening.
+  const pts = []
+  for (let i = 0; i < 20; i++) {
+    pts.push({ x: 0.72 + (Math.random() - 0.5) * 0.05, y: 0.18 + (Math.random() - 0.5) * 0.05, at: i })
+  }
+  for (let i = 0; i < 4; i++) pts.push({ x: Math.random(), y: Math.random(), at: i })
+
+  const p = proposeZone(pts)
+  check('proposes an area at all', !!p)
+  if (p) {
+    const cx = (p.zone[0].x + p.zone[1].x) / 2
+    const cy = (p.zone[0].y + p.zone[2].y) / 2
+    check('centred on where the balls actually went',
+      Math.abs(cx - 0.72) < 0.09 && Math.abs(cy - 0.18) < 0.09,
+      `(${cx.toFixed(2)}, ${cy.toFixed(2)})`)
+    check('and reports how much of the evidence backs it', p.share > 0.6,
+      p.share.toFixed(2))
+  }
+}
+{
+  // Scattered endings mean a panning camera or a colour picking up the
+  // crowd. Proposing a box around the middle of nothing would be worse than
+  // proposing nothing.
+  const scattered = Array.from({ length: 60 }, (_, i) =>
+    ({ x: (i * 0.137) % 1, y: (i * 0.229) % 1, at: i }))
+  check('refuses when the endings are scattered', proposeZone(scattered) === null)
+  check('and says why', explainFailure(scattered).includes('all over the frame'))
+  check('says something different when nothing was tracked',
+    explainFailure([]).includes('No ball was tracked'))
+}
+
+console.log('\n8. Following a whole alliance, and knowing which one is yours')
+{
+  // Three robots of the same colour. A single-target follow has no way to
+  // show that it has quietly swapped onto a partner; tracking all of them
+  // makes a swap visible, and lets the scout point at the one they mean.
+  const frameAt = (i: number) => {
+    const f = blank()
+    slab(f, 120 + i * 6, 250, 42, 17)   // mine, driving right
+    slab(f, 330 - i * 4, 250, 42, 17)   // a partner, driving left
+    slab(f, 520, 180, 42, 17)           // a partner, parked
+    return f
+  }
+
+  const learned = learnRobot(frameAt(0), 120 / W, 250 / H)!
+  const fleet = new RobotFleet()
+  fleet.setLock({ team: 6036, alliance: 'red', appearance: learned.appearance })
+
+  for (let i = 0; i < 5; i++) fleet.update(frameAt(i), W, H, i * 33)
+  check('sees every robot of the alliance, not just one', fleet.robots.length === 3,
+    `got ${fleet.robots.length}`)
+
+  check('picking one by pointing at it works',
+    fleet.selectAt((120 + 5 * 6) / W, 250 / H))
+  const chosen = fleet.robots.find((r) => r.selected)
+  check('and it is the one that was pointed at',
+    !!chosen && Math.abs(chosen.x * W - (120 + 5 * 6)) < 30,
+    chosen ? `${(chosen.x * W) | 0}` : 'none')
+
+  // A partner drives straight through it. While they are apart the follow
+  // must hold; while they physically overlap they are one coloured shape and
+  // no colour tracker can separate them — so the requirement there is that it
+  // says so, rather than reporting a confident centroid between two robots.
+  let apartOk = 0, apartN = 0
+  let mergedFlagged = 0, overlapN = 0
+  for (let i = 5; i < 40; i++) {
+    const mineX = 120 + i * 6
+    const theirsX = 330 - i * 4
+    const overlapping = Math.abs(mineX - theirsX) < 84
+    const s = fleet.update(frameAt(i), W, H, i * 33)
+    if (overlapping) {
+      overlapN++
+      if (!s || s.merged || s.confidence < 0.3) mergedFlagged++
+    } else {
+      apartN++
+      if (s && s.confidence >= 0.3 && Math.abs(s.x * W - mineX) < 45) apartOk++
+    }
+  }
+  check('holds the right robot whenever they are apart', apartOk === apartN,
+    `${apartOk}/${apartN}`)
+  check('and admits it cannot tell them apart while they overlap',
+    mergedFlagged >= overlapN - 2, `${mergedFlagged}/${overlapN}`)
+
+  // The point of admitting it: a shot from that stretch is not credited.
+  const duringMerge = fleet.positionAt(21 * 33)
+  check('so a shot during the overlap is left unattributed', duringMerge === null)
+
+  check('an alliance colour is available before anyone clicks',
+    allianceLook('red').hue > 300 && allianceLook('blue').hue > 180)
+}
+{
+  // Pointing at empty carpet must not select anything.
+  const f = blank(); slab(f, 200, 250, 42, 17)
+  const learned = learnRobot(f, 200 / W, 250 / H)!
+  const fleet = new RobotFleet()
+  fleet.setLock({ team: 1, alliance: 'red', appearance: learned.appearance })
+  for (let i = 0; i < 4; i++) fleet.update(f, W, H, i * 33)
+  check('pointing at nothing selects nothing', !fleet.selectAt(0.05, 0.9))
+}
+
+{
+  // Pointing at a robot the fleet has not found teaches it a better colour,
+  // and the lock is then updated with that colour. If that update wiped the
+  // fleet, it would also wipe the click that produced it — and pointing at a
+  // robot would silently do nothing at all.
+  const frame = (i: number) => {
+    const f = blank()
+    slab(f, 200 + i * 5, 250, 42, 17, [214, 44, 54])
+    return f
+  }
+  const fleet = new RobotFleet()
+  // Start on the generic alliance colour, as picking a team does.
+  fleet.setLock({ team: 6036, alliance: 'red', appearance: allianceLook('red') })
+  fleet.update(frame(0), W, H, 0)
+
+  const learned = learnRobot(frame(0), 200 / W, 250 / H)!
+  fleet.seed(200 / W, 250 / H, learned.radius, 0)
+  // Exactly what the UI does next.
+  fleet.setLock({ team: 6036, alliance: 'red', appearance: learned.appearance })
+
+  let followed = 0
+  for (let i = 1; i < 12; i++) {
+    const s = fleet.update(frame(i), W, H, i * 33)
+    if (s && s.confidence >= 0.3 && Math.abs(s.x * W - (200 + i * 5)) < 40) followed++
+  }
+  check('a click that teaches a new colour still selects the robot',
+    followed >= 8, `${followed}/11`)
+
+  // Changing team, though, must forget everything.
+  fleet.setLock({ team: 254, alliance: 'red', appearance: learned.appearance })
+  check('changing team forgets the old selection', fleet.sighting === null)
+}
+
+console.log('\n9. End to end: a shot, found and credited, off one pass')
 {
   // Everything at once, the way the app runs it: two robots of the same
   // colour, one of them shoots, the detector finds the shot, and the lock
@@ -302,11 +462,11 @@ console.log('\n7. End to end: a shot, found and credited, off one pass')
   /** Mine on the left, theirs on the right; the ball flies from `from`. */
   function play(from: 'mine' | 'theirs') {
     const engine = new DetectorEngine([detector])
-    const watcher = new RobotWatcher()
+    const fleet = new RobotFleet()
     const first = (() => { const f = blank(); slab(f, 150, 250, 42, 17); slab(f, 380, 250, 42, 17); return f })()
     const learned = learnRobot(first, 150 / W, 250 / H)!
-    watcher.setLock({ team: 6036, alliance: 'red', appearance: learned.appearance })
-    watcher.seed(150 / W, 250 / H, learned.radius, 0)
+    fleet.setLock({ team: 6036, alliance: 'red', appearance: learned.appearance })
+    fleet.seed(150 / W, 250 / H, learned.radius, 0)
 
     const startX = from === 'mine' ? 150 : 380
     const credits: ReturnType<typeof creditEvent>[] = []
@@ -321,8 +481,8 @@ console.log('\n7. End to end: a shot, found and credited, off one pass')
         ball(f, startX + (470 - startX) * k, 250 - 185 * k, 7, { blur: 2 })
       }
       const at = i * 33
-      watcher.update(f, W, H, at)
-      for (const ev of engine.update(f, W, H, at)) credits.push(creditEvent(watcher, ev))
+      fleet.update(f, W, H, at)
+      for (const ev of engine.update(f, W, H, at)) credits.push(creditEvent(fleet, ev))
     }
     return credits
   }
@@ -339,7 +499,7 @@ console.log('\n7. End to end: a shot, found and credited, off one pass')
     theirs[0] ? `team ${theirs[0].team}, rejected ${theirs[0].rejected}` : '')
 }
 
-console.log('\n8. Looking without believing')
+console.log('\n10. Looking without believing')
 {
   // Scrubbing a video, sampling a colour and aiming at a robot all need the
   // detectors to report what is in the frame on screen. If that ran the real

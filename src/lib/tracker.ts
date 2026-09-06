@@ -45,6 +45,24 @@ export interface Track {
   vx: number
   vy: number
   radius: number
+  /**
+   * Smoothed blob area in pixels.
+   *
+   * Carried separately from the radius because the radius is the *minor*
+   * half-axis, and two robots merging side by side do not change it at all —
+   * the blob gets twice as wide and exactly as tall. Area notices that;
+   * radius cannot, whichever way the merge happens to be oriented.
+   */
+  pixels: number
+  /**
+   * This frame's area, unsmoothed.
+   *
+   * Smoothing is right for the gates that have to survive a noisy centroid,
+   * and wrong for spotting a merge: two robots colliding double the area in
+   * a single frame, and a 0.7/0.3 blend turns that step into a ramp that
+   * never crosses any threshold worth setting.
+   */
+  rawPixels: number
   /** Where and when the track began, in processing pixels and video ms. */
   originX: number
   originY: number
@@ -64,6 +82,13 @@ export interface Track {
   score: number
   /** Normalised path, capped, for attribution and drawing. */
   path: TrackPoint[]
+  /**
+   * This thing has not moved for a long time, so it is part of the scene
+   * rather than part of the game — a ball in a hopper, in a rack, or sitting
+   * against the back wall. Set by whoever owns the tracker, since only they
+   * know how long "a long time" is.
+   */
+  scenery: boolean
   /** Free-form per-rule state, owned by whoever created the tracker. */
   inZone: boolean
   everInZone: boolean
@@ -166,13 +191,14 @@ export class Tracker {
       if (takenDet.has(di)) return
       const track: Track = {
         id: this.nextId++,
-        x: det.x, y: det.y, vx: 0, vy: 0, radius: det.radius,
+        x: det.x, y: det.y, vx: 0, vy: 0, radius: det.radius, pixels: det.pixels, rawPixels: det.pixels,
         originX: det.x, originY: det.y, originAt: atMs,
         restX: det.x, restY: det.y, restSince: atMs,
         missed: 0, hits: 1, age: 1,
         confirmed: minHits <= 1,
         score: det.score,
         path: [{ x: det.x / w, y: det.y / h, at: atMs }],
+        scenery: false,
         inZone: false, everInZone: false, inZoneSince: 0, counted: false,
       }
       this.items.push(track)
@@ -182,11 +208,25 @@ export class Tracker {
     // ---- 5. retire ---------------------------------------------------------
     // An unconfirmed track is dropped the moment it is missed: it was one
     // frame of noise and keeping it alive only invites a false association.
-    this.items = this.items.filter((t) =>
-      t.confirmed ? t.missed <= maxMissed * 2 : t.missed === 0)
+    this.retired = []
+    this.items = this.items.filter((t) => {
+      const alive = t.confirmed ? t.missed <= maxMissed * 2 : t.missed === 0
+      if (!alive && t.confirmed) this.retired.push(t)
+      return alive
+    })
 
     return started
   }
+
+  /**
+   * Tracks that ended this frame.
+   *
+   * Where a ball's track ends is the single most informative thing a scan
+   * produces: balls stop being visible because they went into something.
+   * Collected over a match, those endings *are* the goal, which is how the
+   * scoring area can be proposed rather than drawn by hand.
+   */
+  retired: Track[] = []
 
   private absorb(
     track: Track, det: Detection, w: number, h: number, atMs: number,
@@ -209,6 +249,8 @@ export class Tracker {
     // Radius is smoothed too: a partially occluded ball measures small for a
     // frame, and letting that through would break the size gate next frame.
     track.radius = track.radius * 0.7 + det.radius * 0.3
+    track.pixels = track.pixels * 0.7 + det.pixels * 0.3
+    track.rawPixels = det.pixels
     track.score = track.score * 0.7 + det.score * 0.3
     track.missed = 0
     track.hits++

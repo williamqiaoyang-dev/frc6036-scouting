@@ -31,9 +31,10 @@ export function DetectorTuning({
    * writes that zero back the first time it is touched.
    */
   const APPEARANCE_FALLBACK = {
-    edgeSlack: 1.9, close: 2, blurTolerance: 2.6, specularValue: 0.88, maxValue: 1,
+    edgeSlack: 1.9, close: 2, blurTolerance: 2.6, specularValue: 0.88,
+    maxValue: 1, ceilingY: 0,
   }
-  const RULE_FALLBACK = { minHits: 2, minApproach: 0.55, minSpeedPx: 0.6 }
+  const RULE_FALLBACK = { minHits: 2, minApproach: 0.55, minSpeedPx: 0.6, scenerySec: 0 }
 
   const appearanceRows: [string, keyof typeof look, number, number, number, string][] = [
     ['Colour', 'hue', 0, 360, 1, 'Sampled from the real thing, or set by hand.'],
@@ -45,6 +46,7 @@ export function DetectorTuning({
     ['Min roundness', 'minCircularity', 0, 1, 0.01, 'Higher rejects arms and streaks.'],
     ['Max roundness', 'maxCircularity', 0.1, 1, 0.01, 'Below 1 to require a non-round shape, like a bumper.'],
     ['Floor line', 'groundY', 0.2, 1, 0.01, 'Nothing below this fraction of the frame is looked at.'],
+    ['Back-of-field line', 'ceilingY', 0, 0.8, 0.01, 'Nothing above this is looked at. Raise it to cut out the far hopper and the crowd, which are full of the right colour.'],
     ['Edge slack', 'edgeSlack', 1, 3, 0.05, 'How far a rim or shadowed pixel may stray and still join the thing it touches. 1 switches it off.'],
     ['Gap bridging (px)', 'close', 0, 5, 1, 'Re-fuses a thing a highlight or a strut cut in two. Too high and two nearby balls weld together.'],
     ['Motion slack', 'blurTolerance', 1, 5, 0.1, 'How long a smear may be and still count as round. Raise it if fast shots are being missed.'],
@@ -60,6 +62,7 @@ export function DetectorTuning({
     ['Min speed (px/frame)', 'minSpeedPx', 0, 20, 0.1, 'Ignore things that are not going anywhere.'],
     ['Hold time (s)', 'dwellSec', 0.5, 30, 0.5, 'Only for "stayed here" and "stopped moving".'],
     ['Stillness (px)', 'stillPx', 1, 40, 1, 'Movement below this counts as not moving.'],
+    ['Ignore things that sit still (s)', 'scenerySec', 0, 20, 0.5, 'A ball that never moves is scenery — in a rack, a hopper, the far field. 0 counts them like anything else.'],
   ]
 
   return (

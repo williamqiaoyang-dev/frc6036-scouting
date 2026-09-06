@@ -62,6 +62,26 @@ export interface Detector {
   appearance: Appearance
   /** Normalised polygon. Empty means the detector cannot fire. */
   zone: { x: number; y: number }[]
+  /**
+   * Areas to pretend are empty. Anything found inside one is discarded
+   * before it is ever tracked.
+   *
+   * A camera in the stands sees the far hopper, the far alliance's field and
+   * the crowd, and a game piece is the same colour wherever it is. Colour and
+   * shape cannot tell those apart from a live ball, because there is nothing
+   * to tell apart — they are the same object somewhere irrelevant. Where to
+   * look is the scout's knowledge, not the detector's.
+   */
+  ignore?: { x: number; y: number }[][]
+  /**
+   * Seconds a thing may sit motionless before it is treated as scenery and
+   * stops being able to fire anything. 0 switches it off.
+   *
+   * A ball resting in a rack at the back of the field never moves. A ball
+   * that was shot is only ever in view while moving. That difference costs
+   * nothing to measure and removes almost all of the background at once.
+   */
+  scenerySec?: number
   rule: DetectorRule
   /** Units added per event. FUEL is seen one ball at a time, so 1. */
   step: number
@@ -90,6 +110,14 @@ export interface Detector {
   minApproach?: number
   /** Minimum pixels per frame, to ignore things that are not going anywhere. */
   minSpeedPx?: number
+}
+
+/** Where a moving thing stopped being visible, and when. */
+export interface VanishPoint {
+  x: number
+  y: number
+  /** Seconds into the video. */
+  at: number
 }
 
 export interface DetectorEvent {
@@ -133,13 +161,21 @@ class DetectorState {
   latest: Detection[] = []
   /** Confirmed tracks, exposed so the overlay can draw flight paths. */
   paths: Track[] = []
+  /** Where moving things stopped being visible. Feeds the goal finder. */
+  vanished: VanishPoint[] = []
+  /** Positions currently judged to be scenery, for the overlay. */
+  sceneryAt: { x: number; y: number; radius: number }[] = []
 
   reset() {
     this.tracker.reset()
     this.lastFiredAt = -Infinity
     this.latest = []
     this.paths = []
+    this.sceneryAt = []
   }
+
+  /** Kept across a reset, since a scan is how the evidence is gathered. */
+  clearVanished() { this.vanished = [] }
 
   /**
    * Look at a frame without believing anything about it.
@@ -149,16 +185,26 @@ class DetectorState {
    * full update for that would advance every track and fire real rules, so
    * dragging the scrub bar would manufacture shots that never happened.
    */
-  observe(frame: ImageData, _w: number, _h: number) {
+  observe(frame: ImageData, w: number, h: number) {
     const d = this.detector
-    this.latest = d.enabled ? detectBlobs(frame, d.appearance) : []
+    if (!d.enabled) { this.latest = []; return }
+    const found = detectBlobs(frame, d.appearance)
+    this.latest = d.ignore?.length
+      ? found.filter((det) => !inAnyZone(det.x / w, det.y / h, d.ignore!))
+      : found
   }
 
   update(frame: ImageData, w: number, h: number, atMs: number): DetectorEvent[] {
     const d = this.detector
     if (!d.enabled) { this.latest = []; this.paths = []; return [] }
 
-    const found = detectBlobs(frame, d.appearance)
+    let found = detectBlobs(frame, d.appearance)
+
+    // Discard anything in an area the scout has marked as not part of the
+    // game, before it can become a track or a count.
+    if (d.ignore?.length) {
+      found = found.filter((det) => !inAnyZone(det.x / w, det.y / h, d.ignore!))
+    }
     this.latest = found
 
     this.tracker.configure({
@@ -167,7 +213,34 @@ class DetectorState {
       stillPx: d.stillPx,
     })
     this.tracker.update(found, w, h, atMs)
+
+    // Mark what has stopped being part of the game. A thing that moved and
+    // then parked — a ball that rolled to a stop against the wall — becomes
+    // furniture once it has held still for `scenerySec`.
+    const settleMs = (d.scenerySec ?? 0) * 1000
+    if (settleMs > 0) {
+      for (const t of this.tracker.tracks) {
+        if (!t.scenery && atMs - t.restSince >= settleMs) t.scenery = true
+      }
+    }
     this.paths = this.tracker.confirmed
+
+    // Where confirmed, moving tracks ended. Harvested whether or not this
+    // detector has an area, because it is what proposes one.
+    for (const dead of this.tracker.retired) {
+      if (dead.scenery) continue
+      const travelled = Math.hypot(dead.x - dead.originX, dead.y - dead.originY)
+      if (travelled < d.minTravelPx) continue
+      const seen = dead.path[dead.path.length - 1]
+      if (!seen) continue
+      this.vanished.push({ x: seen.x, y: seen.y, at: seen.at / 1000 })
+      if (this.vanished.length > 4000) this.vanished.shift()
+    }
+
+    /** Detections belonging to a scenery track, so the overlay can dim them. */
+    this.sceneryAt = this.tracker.tracks
+      .filter((t) => t.scenery && t.missed === 0)
+      .map((t) => ({ x: t.x, y: t.y, radius: t.radius }))
 
     // A detector with no area drawn watches, and shows what it watches, but
     // can never fire. That is the whole point of the area.
@@ -179,15 +252,23 @@ class DetectorState {
 
     // ---- keep each track's zone bookkeeping up to date -------------------
     for (const t of this.tracker.tracks) {
-      const nowIn = t.missed === 0 && pointInZone(t.x / w, t.y / h, d.zone)
+      const nowIn = t.missed === 0 && !t.scenery && pointInZone(t.x / w, t.y / h, d.zone)
       if (nowIn && !t.inZone) t.inZoneSince = atMs
       t.inZone = nowIn
       if (nowIn) t.everInZone = true
     }
 
     // ---- apply the rule --------------------------------------------------
+    const hold = (d.scenerySec ?? 0) * 1000
     for (const t of this.tracker.confirmed) {
-      if (t.counted) continue
+      if (t.counted || t.scenery) continue
+      // With scenery suppression on, a thing must have actually gone
+      // somewhere before it may fire. Waiting for the hold to expire would
+      // be too late — `enter` fires within two frames of a track appearing,
+      // and a ball resting in a rack looks identical to one arriving until
+      // it fails to move. Requiring movement decides it immediately, and
+      // costs a real shot nothing: a shot is moving by definition.
+      if (hold > 0 && Math.hypot(t.x - t.originX, t.y - t.originY) <= d.stillPx) continue
       // A cooldown suppresses *this* track's turn, not the rest of the list:
       // breaking out here used to throw away a second, genuine event that
       // happened to land in another track during the quiet window.
@@ -268,6 +349,12 @@ class DetectorState {
   }
 }
 
+/** True when the point falls inside any of the polygons. */
+function inAnyZone(nx: number, ny: number, zones: { x: number; y: number }[][]): boolean {
+  for (const z of zones) if (pointInZone(nx, ny, z)) return true
+  return false
+}
+
 /** 0-1, from how well the thing matched and how long it was followed. */
 function confidenceOf(t: Track): number {
   const seen = Math.min(1, t.hits / 8)
@@ -292,6 +379,19 @@ export class DetectorEngine {
   }
 
   reset() { for (const s of this.states) s.reset() }
+
+  /** Throw away the harvested endings as well as the tracking state. */
+  resetAll() { for (const s of this.states) { s.reset(); s.clearVanished() } }
+
+  /** Where this detector's moving things stopped being visible. */
+  vanished(detectorId: string): VanishPoint[] {
+    return this.states.find((s) => s.detector.id === detectorId)?.vanished ?? []
+  }
+
+  /** Positions currently judged to be scenery, per detector. */
+  scenery(): { detectorId: string; at: { x: number; y: number; radius: number }[] }[] {
+    return this.states.map((s) => ({ detectorId: s.detector.id, at: s.sceneryAt }))
+  }
 
   update(frame: ImageData, w: number, h: number, atMs: number): DetectorEvent[] {
     const out: DetectorEvent[] = []

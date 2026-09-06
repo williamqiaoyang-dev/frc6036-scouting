@@ -3,9 +3,10 @@ import { DetectorEngine, type Detector, type DetectorEvent } from '@/lib/detecto
 import { sampleHue, type Detection } from '@/lib/vision'
 import type { Track } from '@/lib/tracker'
 import {
-  creditEvent, learnRobot, RobotWatcher,
+  creditEvent, learnRobot, RobotFleet,
   type RobotLock, type RobotSighting, type ShotCredit,
 } from '@/lib/robotLock'
+import { proposeZone, explainFailure, type ZoneProposal } from '@/lib/autoZone'
 
 export type { ShotCredit }
 
@@ -58,7 +59,7 @@ export function useDetectors({
   robotLock?: RobotLock | null
 }) {
   const engine = useMemo(() => new DetectorEngine(detectors), [])
-  const watcher = useMemo(() => new RobotWatcher(), [])
+  const fleet = useMemo(() => new RobotFleet(), [])
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const frameRef = useRef<ImageData | null>(null)
   const onEventRef = useRef(onEvent)
@@ -67,13 +68,15 @@ export function useDetectors({
   const [detections, setDetections] = useState<{ detectorId: string; detections: Detection[] }[]>([])
   const [paths, setPaths] = useState<{ detectorId: string; tracks: Track[] }[]>([])
   const [robot, setRobot] = useState<RobotSighting | null>(null)
+  const [robots, setRobots] = useState<RobotSighting[]>([])
+  const [scenery, setScenery] = useState<{ detectorId: string; at: { x: number; y: number; radius: number }[] }[]>([])
   const [procHeight, setProcHeight] = useState(Math.round(procWidth * 9 / 16))
   const [fps, setFps] = useState(0)
   const [blocked, setBlocked] = useState(false)
 
   useEffect(() => { onEventRef.current = onEvent }, [onEvent])
   useEffect(() => { engine.setDetectors(detectors) }, [engine, detectors])
-  useEffect(() => { watcher.setLock(robotLock) }, [watcher, robotLock])
+  useEffect(() => { fleet.setLock(robotLock) }, [fleet, robotLock])
 
   // Build the frame reader. Independent of how it is driven.
   useEffect(() => {
@@ -136,10 +139,10 @@ export function useDetectors({
 
       // The robot is followed *before* the detectors run, so a shot found
       // this frame can be credited against a position from this frame.
-      const seen = watcher.update(frame, procWidth, h, at)
+      const seen = fleet.update(frame, procWidth, h, at)
 
       for (const ev of engine.update(frame, procWidth, h, at)) {
-        onEventRef.current(ev, creditEvent(watcher, ev))
+        onEventRef.current(ev, creditEvent(fleet, ev))
       }
 
       const now = performance.now()
@@ -150,14 +153,16 @@ export function useDetectors({
         lastPublish = now
         setDetections(engine.detections())
         setPaths(engine.paths())
+        setScenery(engine.scenery())
         setRobot(seen)
+        setRobots(fleet.robots)
         setFps(Math.round(smoothed))
       }
     }
 
     setBlocked(false)
     return () => { stopped = true }
-  }, [video, engine, watcher, procWidth])
+  }, [video, engine, fleet, procWidth])
 
   // Live loop: track-reader where there is a track, repaint loop otherwise.
   useEffect(() => {
@@ -229,14 +234,46 @@ export function useDetectors({
     if (!frame) return null
     const learned = learnRobot(frame, nx, ny)
     if (!learned) return null
-    watcher.seed(nx, ny, learned.radius, (video?.currentTime ?? 0) * 1000)
+    fleet.seed(nx, ny, learned.radius, (video?.currentTime ?? 0) * 1000)
     return learned.appearance
-  }, [watcher, video])
+  }, [fleet, video])
 
-  const reset = useCallback(() => { engine.reset(); watcher.reset() }, [engine, watcher])
+  const reset = useCallback(() => { engine.reset(); fleet.reset() }, [engine, fleet])
+
+  /** Forget the harvested evidence as well as the tracking state. */
+  const resetAll = useCallback(() => { engine.resetAll(); fleet.reset() }, [engine, fleet])
+
+  /**
+   * Point at a robot. Picks whichever of the tracked robots was clicked; if
+   * none was — no fleet yet, or the click missed — learns a fresh appearance
+   * from the bumper under the cursor instead.
+   */
+  const pickRobotAt = useCallback((nx: number, ny: number) => {
+    if (fleet.selectAt(nx, ny)) return { picked: true as const, appearance: null }
+    if (!frameRef.current) processRef.current(undefined, true)
+    const frame = frameRef.current
+    if (!frame) return { picked: false as const, appearance: null }
+    const learned = learnRobot(frame, nx, ny)
+    if (!learned) return { picked: false as const, appearance: null }
+    fleet.seed(nx, ny, learned.radius, (video?.currentTime ?? 0) * 1000)
+    return { picked: true as const, appearance: learned.appearance }
+  }, [fleet, video])
+
+  /**
+   * Propose the scoring area from where balls actually stopped being visible.
+   * Returns the proposal, or the reason there isn't one.
+   */
+  const findZone = useCallback((detectorId: string): {
+    proposal: ZoneProposal | null; why: string
+  } => {
+    const points = engine.vanished(detectorId)
+    const proposal = proposeZone(points)
+    return { proposal, why: proposal ? '' : explainFailure(points) }
+  }, [engine])
 
   return {
-    detections, paths, robot, blocked, fps, sampleAt, learnRobotAt,
-    reset, processFrame, previewFrame, procWidth, procHeight,
+    detections, paths, scenery, robot, robots, trail: fleet.trail,
+    blocked, fps, sampleAt, learnRobotAt, pickRobotAt, findZone,
+    reset, resetAll, processFrame, previewFrame, procWidth, procHeight,
   }
 }

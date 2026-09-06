@@ -100,6 +100,16 @@ export interface Appearance {
   maxCircularity: number
   /** Normalised y below which pixels are ignored — the floor. */
   groundY: number
+  /**
+   * Normalised y *above* which pixels are ignored — the back of the field.
+   *
+   * The companion to the floor and just as necessary. A camera in the stands
+   * sees the far end of the field, the far alliance's hopper and whatever is
+   * behind the guardrail, all of it full of game pieces of exactly the right
+   * colour. They are above the goal in the frame, so a single line excludes
+   * them. 0 keeps everything.
+   */
+  ceilingY?: number
 
   /**
    * How far a *marginal* pixel may stray from the gates above and still be
@@ -190,6 +200,7 @@ function resolve(cfg: Appearance) {
     blurTolerance: cfg.blurTolerance ?? 2.4,
     maxValue: cfg.maxValue ?? 1,
     specularValue: cfg.specularValue ?? 0.88,
+    ceilingY: cfg.ceilingY ?? 0,
   }
 }
 
@@ -257,6 +268,7 @@ export function detectBlobs(frame: ImageData, cfg: Appearance): Detection[] {
   let anySpecular = false
 
   const floorPx = Math.min(h, Math.floor(cfg.groundY * h))
+  const ceilPx = Math.max(0, Math.min(floorPx, Math.floor(opt.ceilingY * h)))
   const tol = Math.max(1, cfg.hueTolerance)
   // Hue gets a fraction of the slack the other two get; see `edgeSlack`.
   const slackTol = tol * (1 + (opt.edgeSlack - 1) * 0.45)
@@ -276,8 +288,9 @@ export function detectBlobs(frame: ImageData, cfg: Appearance): Detection[] {
   // HSV is computed inline rather than through `rgbToHsv`, which returns a
   // tuple: at a third of a million pixels a frame that array is the single
   // most expensive thing in the pipeline.
+  const scanFrom = ceilPx * w
   const scanTo = floorPx * w
-  for (let p = 0, i = 0; p < scanTo; p++, i += 4) {
+  for (let p = scanFrom, i = scanFrom * 4; p < scanTo; p++, i += 4) {
     const r = data[i], g = data[i + 1], b = data[i + 2]
     const max = r > g ? (r > b ? r : b) : (g > b ? g : b)
     // Too dark to be anything, and far the most common case — out first.

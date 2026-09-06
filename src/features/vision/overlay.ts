@@ -87,7 +87,7 @@ export function drawVisionOverlay(
 export function drawDetectorOverlay(
   canvas: HTMLCanvasElement,
   {
-    detectors, colorOf, seen, paths, robot, robotTeam,
+    detectors, colorOf, seen, paths, scenery, robot, robots, trail, robotTeam,
     draft, drawingId, procWidth, procHeight,
   }: {
     detectors: Detector[]
@@ -95,8 +95,14 @@ export function drawDetectorOverlay(
     seen: { detectorId: string; detections: Detection[] }[]
     /** Confirmed tracks, drawn as the trail each thing has taken. */
     paths?: { detectorId: string; tracks: Track[] }[]
+    /** Positions currently judged to be scenery rather than in play. */
+    scenery?: { detectorId: string; at: { x: number; y: number; radius: number }[] }[]
     /** The robot being followed, if the scout picked one. */
     robot?: RobotSighting | null
+    /** Every robot of that alliance, so a swap is visible when it happens. */
+    robots?: RobotSighting[]
+    /** Where the followed robot has been. */
+    trail?: RobotSighting[]
     robotTeam?: number | null
     draft: Point[]
     drawingId: string | null
@@ -139,6 +145,27 @@ export function drawDetectorOverlay(
       ctx.lineTo(w, d.appearance.groundY * h)
       ctx.stroke()
       ctx.setLineDash([])
+    }
+  }
+
+  // Areas the scout has excluded. Hatched rather than filled, so they read
+  // as "nothing is looked at here" and not as another scoring area.
+  for (const d of detectors) {
+    for (const mask of d.ignore ?? []) {
+      if (mask.length < 3) continue
+      ctx.beginPath()
+      mask.forEach((p, i) => (i ? ctx.lineTo(p.x * w, p.y * h) : ctx.moveTo(p.x * w, p.y * h)))
+      ctx.closePath()
+      ctx.fillStyle = 'rgba(20,22,24,.55)'
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(255,120,120,.6)'
+      ctx.setLineDash([5, 4])
+      ctx.lineWidth = 1
+      ctx.stroke()
+      ctx.setLineDash([])
+      const top = mask.reduce((a, b) => (b.y < a.y ? b : a))
+      ctx.fillStyle = 'rgba(255,140,140,.85)'
+      ctx.fillText('ignored', top.x * w + 4, top.y * h + 12)
     }
   }
 
@@ -194,22 +221,70 @@ export function drawDetectorOverlay(
     }
   }
 
+  // Scenery — balls that have not moved, so they are furniture rather than
+  // game pieces. Drawn crossed out: they must be visible, or a scout cannot
+  // tell "ignored it" from "never saw it", but they must not look counted.
+  for (const group of scenery ?? []) {
+    const d = detectors.find((x) => x.id === group.detectorId)
+    if (!d?.enabled) continue
+    ctx.strokeStyle = 'rgba(150,155,160,.75)'
+    ctx.lineWidth = 1
+    for (const at of group.at) {
+      const cx = at.x * sx, cy = at.y * sy, r = Math.max(5, at.radius * sx)
+      ctx.beginPath()
+      ctx.arc(cx, cy, r, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(cx - r * 0.7, cy - r * 0.7)
+      ctx.lineTo(cx + r * 0.7, cy + r * 0.7)
+      ctx.stroke()
+    }
+  }
+
   // ---- the robot being followed -------------------------------------------
   // A square rather than a ring, so it can never be mistaken for a ball, and
   // dashed while the lock is coasting — an operator has to be able to see
   // the difference between "following it" and "guessing where it went".
+  // Every robot of the alliance gets a box, so a follow that has quietly
+  // jumped to a partner is visible as a jump rather than hidden behind a
+  // confident-looking outline.
+  for (const r of robots ?? []) {
+    if (r.selected) continue
+    const cx = r.x * w, cy = r.y * h
+    const rad = Math.max(12, r.r * w * 1.15)
+    ctx.strokeStyle = 'rgba(200,205,210,.45)'
+    ctx.lineWidth = 1
+    ctx.strokeRect(cx - rad, cy - rad, rad * 2, rad * 2)
+  }
+
+  // Where the followed robot has been. Only the confident stretches: a
+  // dotted gap is the honest picture of a moment nobody could see it.
+  if (trail && trail.length > 1) {
+    ctx.strokeStyle = 'rgba(255,196,0,.45)'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    let pen = false
+    for (const s of trail) {
+      if (s.merged || s.confidence < 0.3) { pen = false; continue }
+      if (pen) ctx.lineTo(s.x * w, s.y * h)
+      else { ctx.moveTo(s.x * w, s.y * h); pen = true }
+    }
+    ctx.stroke()
+  }
+
   if (robot) {
     const cx = robot.x * w, cy = robot.y * h
     const r = Math.max(14, robot.r * w * 1.15)
-    const solid = robot.confidence >= 0.45
+    const solid = robot.confidence >= 0.45 && !robot.merged
     ctx.strokeStyle = solid ? '#FFC400' : '#FFC40088'
-    ctx.lineWidth = 2
+    ctx.lineWidth = solid ? 2 : 1.5
     ctx.setLineDash(solid ? [] : [4, 4])
     ctx.strokeRect(cx - r, cy - r, r * 2, r * 2)
     ctx.setLineDash([])
     ctx.fillStyle = '#FFC400'
-    ctx.fillText(
-      robotTeam ? `${robotTeam}${solid ? '' : ' — lost'}` : 'tracked robot',
-      cx - r, cy - r - 5)
+    const label = !robotTeam ? 'tracked robot'
+      : robot.merged ? `${robotTeam} — can't tell which`
+      : solid ? `${robotTeam}` : `${robotTeam} — lost`
+    ctx.fillText(label, cx - r, cy - r - 5)
   }
 }
