@@ -278,13 +278,12 @@ export function drawDetectorOverlay(
   // Every robot of the alliance gets a box, so a follow that has quietly
   // jumped to a partner is visible as a jump rather than hidden behind a
   // confident-looking outline.
-  for (const r of robots ?? []) {
-    if (r.selected) continue
-    const cx = r.x * w, cy = r.y * h
-    const rad = Math.max(12, r.r * w * 1.15)
+  for (const other of robots ?? []) {
+    if (other.selected) continue
+    const bw = Math.max(10, other.w * w), bh = Math.max(8, other.h * h)
     ctx.strokeStyle = 'rgba(200,205,210,.45)'
     ctx.lineWidth = 1
-    ctx.strokeRect(cx - rad, cy - rad, rad * 2, rad * 2)
+    ctx.strokeRect(other.x * w - bw / 2, other.y * h - bh / 2, bw, bh)
   }
 
   // Where the followed robot has been. Only the confident stretches: a
@@ -303,18 +302,21 @@ export function drawDetectorOverlay(
   }
 
   if (robot) {
-    const cx = robot.x * w, cy = robot.y * h
-    const r = Math.max(14, robot.r * w * 1.15)
+    // The blob's own box, not a square built from its shorter side: a robot
+    // is wide and short, so a square is simultaneously too narrow to be its
+    // outline and too tall to be its bumper.
+    const bw = Math.max(12, robot.w * w), bh = Math.max(10, robot.h * h)
+    const x = robot.x * w - bw / 2, y = robot.y * h - bh / 2
     const solid = robot.confidence >= 0.45 && !robot.merged
     ctx.strokeStyle = solid ? '#FFC400' : '#FFC40088'
     ctx.lineWidth = solid ? 2 : 1.5
     ctx.setLineDash(solid ? [] : [4, 4])
-    ctx.strokeRect(cx - r, cy - r, r * 2, r * 2)
+    ctx.strokeRect(x, y, bw, bh)
     ctx.setLineDash([])
     ctx.fillStyle = '#FFC400'
     const label = !robotTeam ? 'tracked robot'
       : robot.merged ? `${robotTeam} — can't tell which`
       : solid ? `${robotTeam}` : `${robotTeam} — lost`
-    ctx.fillText(label, cx - r, cy - r - 5)
+    ctx.fillText(label, x, y - 5)
   }
 }

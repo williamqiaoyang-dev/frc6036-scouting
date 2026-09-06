@@ -63,6 +63,15 @@ export interface Track {
    * never crosses any threshold worth setting.
    */
   rawPixels: number
+  /**
+   * Smoothed bounding box, in processing pixels.
+   *
+   * A robot is wide and short; `radius` is its *minor* half-axis, so a
+   * square built from it is far too narrow to be the robot's outline and
+   * far too tall to be its bumper. Anything drawing a box needs both sides.
+   */
+  boxW: number
+  boxH: number
   /** Where and when the track began, in processing pixels and video ms. */
   originX: number
   originY: number
@@ -192,6 +201,7 @@ export class Tracker {
       const track: Track = {
         id: this.nextId++,
         x: det.x, y: det.y, vx: 0, vy: 0, radius: det.radius, pixels: det.pixels, rawPixels: det.pixels,
+        boxW: det.width, boxH: det.height,
         originX: det.x, originY: det.y, originAt: atMs,
         restX: det.x, restY: det.y, restSince: atMs,
         missed: 0, hits: 1, age: 1,
@@ -251,6 +261,8 @@ export class Tracker {
     track.radius = track.radius * 0.7 + det.radius * 0.3
     track.pixels = track.pixels * 0.7 + det.pixels * 0.3
     track.rawPixels = det.pixels
+    track.boxW = track.boxW * 0.7 + det.width * 0.3
+    track.boxH = track.boxH * 0.7 + det.height * 0.3
     track.score = track.score * 0.7 + det.score * 0.3
     track.missed = 0
     track.hits++

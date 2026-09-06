@@ -48,8 +48,22 @@ export interface RobotSignature {
   hist: Float32Array
   /** Thresholds for the blob finder, fitted against the photo. */
   appearance: Appearance
-  /** Width over height in the photo — a robot is roughly one shape. */
+  /** Width over height of the robot in the photo. Scale-free, so it travels. */
   aspect: number
+  /**
+   * Size band as fractions of the *video* frame width, not photo pixels.
+   *
+   * How big a robot looks in a photograph says precisely nothing about how
+   * big it looks in match footage — one is a close-up from the pit, the
+   * other is a wide shot from the stands. Carrying the photo's pixel sizes
+   * across was a real failure: a close-up gave a floor of twenty-one pixels
+   * radius and a ceiling of a hundred and fifty-nine, so in a 640px frame
+   * the actual robot was rejected for being too small and the only things
+   * that passed were enormous merged patches of field. The box drawn round
+   * them was half the picture, which is exactly what it looked like.
+   */
+  minRadiusFrac: number
+  maxRadiusFrac: number
   /**
    * 0-1: how cleanly the fitted search separated the robot from its
    * background in the photo it was built from. Low means the photo was the
@@ -168,7 +182,15 @@ export function buildSignature(
 
   return {
     hist,
-    appearance: fit.appearance,
+    // Only the colour gate survives the trip from photo to video. The size
+    // band is replaced with one expressed against whatever frame it is
+    // finally used on; see `minRadiusFrac`.
+    appearance: { ...fit.appearance, minRadius: 3, maxRadius: 120 },
+    // A robot in a wide field shot runs from roughly one to twelve per cent
+    // of the frame width across its shorter side. Anything outside that is
+    // not one robot.
+    minRadiusFrac: 0.006,
+    maxRadiusFrac: 0.13,
     aspect: (cx1 - cx0) / Math.max(1, cy1 - cy0),
     quality: fit.score,
     iterations: fit.iterations,

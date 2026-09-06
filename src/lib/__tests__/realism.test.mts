@@ -530,6 +530,65 @@ console.log('\n9. Recognising a robot from a photograph of it')
     climbed.score > fitAppearance(mine, wrong, box.x0, box.y0, box.x1, box.y1, 100).score)
 }
 
+{
+  // The box a scout sees has to be the robot's box.
+  //
+  // Two separate bugs made it "massive and doesn't make sense". The photo's
+  // pixel sizes were carried into video, where they mean nothing: a close-up
+  // gave a floor of 21px radius and a ceiling of 159px, so in a 640px frame
+  // the real robot was rejected for being too small and only enormous merged
+  // patches of field passed. And the box was drawn as a square from the
+  // *minor* half-axis, which fits a wide bumper in neither direction.
+  const closeUp = (() => {
+    const PW = 320, PH = 240
+    const d = new Uint8ClampedArray(PW * PH * 4)
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (Math.random() - 0.5) * 12
+      d[i] = 70 + n; d[i + 1] = 74 + n; d[i + 2] = 80 + n; d[i + 3] = 255
+    }
+    // Robot filling 80% of the photo, the way people photograph a robot.
+    const bw = PW * 0.8, bh = PH * 0.44
+    const x0 = (PW - bw) / 2 | 0, y0 = (PH - bh) / 2 | 0
+    for (let y = y0; y < y0 + bh; y++) for (let x = x0; x < x0 + bw; x++) {
+      const i = (y * PW + x) * 4
+      const lit = 0.7 + 0.4 * (1 - ((x - x0) + (y - y0)) / (bw + bh))
+      d[i] = 214 * lit; d[i + 1] = 44 * lit; d[i + 2] = 54 * lit
+    }
+    return { data: d, width: PW, height: PH } as ImageData
+  })()
+
+  const sig = buildSignature(closeUp)
+  check('a photo carries no video pixel sizes',
+    sig.appearance.minRadius <= 6 && sig.minRadiusFrac > 0 && sig.maxRadiusFrac < 0.3,
+    `min ${sig.appearance.minRadius}, frac ${sig.minRadiusFrac}-${sig.maxRadiusFrac}`)
+
+  // Applied to match footage, that photo must still find a normal robot.
+  const matchFrame = (x: number) => {
+    const f = blank()
+    slab(f, x, 250, 42, 17)
+    return f
+  }
+  const fleet = new RobotFleet()
+  fleet.setLock({ team: 6036, alliance: 'red', appearance: sig.appearance, signature: sig })
+  fleet.seed(200 / W, 250 / H, 17 / W, 0)
+  let seen: ReturnType<typeof fleet.update> = null
+  for (let i = 0; i < 6; i++) seen = fleet.update(matchFrame(200 + i * 4), W, H, i * 33)
+
+  check('a close-up photo still finds a robot in a wide match shot', !!seen, 'nothing found')
+  if (seen) {
+    // The bumper is 84x34. The box must be that, not a square, and not huge.
+    check('the box is the robot, not a quarter of the picture',
+      seen.w * W < 140 && seen.h * H < 90,
+      `${(seen.w * W) | 0}x${(seen.h * H) | 0}`)
+    check('and it is wider than it is tall, like a bumper',
+      seen.w * W > seen.h * H,
+      `${(seen.w * W) | 0}x${(seen.h * H) | 0}`)
+    check('and it actually matches the bumper it is drawn around',
+      Math.abs(seen.w * W - 85) < 25 && Math.abs(seen.h * H - 35) < 20,
+      `${(seen.w * W) | 0}x${(seen.h * H) | 0} vs 85x35`)
+  }
+}
+
 console.log('\n10. End to end: a shot, found and credited, off one pass')
 {
   // Everything at once, the way the app runs it: two robots of the same

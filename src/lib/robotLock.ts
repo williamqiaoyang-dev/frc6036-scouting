@@ -44,6 +44,9 @@ export interface RobotSighting {
   y: number
   /** Normalised radius — half the bumper's shorter side. */
   r: number
+  /** Normalised bounding box of the blob. What a box should actually be drawn from. */
+  w: number
+  h: number
   at: number
   /** 0-1. Below ~0.35 the lock is coasting rather than seeing. */
   confidence: number
@@ -268,7 +271,10 @@ export class RobotFleet {
   /** Start following at a point, before any track exists there yet. */
   seed(nx: number, ny: number, r: number, atMs: number) {
     this.history = []
-    this.last = { x: nx, y: ny, r, at: atMs, confidence: 1, id: -1, selected: true }
+    this.last = {
+      x: nx, y: ny, r, w: r * 2.4, h: r * 2, at: atMs,
+      confidence: 1, id: -1, selected: true,
+    }
     this.history.push(this.last)
     this.selectedId = null
     this.missing = 0
@@ -282,7 +288,11 @@ export class RobotFleet {
     this.at = atMs
 
     this.frame = frame
-    const found = detectBlobs(frame, this.lock.appearance)
+    const found = detectBlobs(frame, this.effectiveLook(w))
+      // No single robot is a third of the picture across. A blob that big is
+      // several robots, a wall, or the carpet — and drawing a box round it is
+      // what "massive and doesn't make sense" looks like.
+      .filter((d) => d.width <= w * 0.34 && d.height <= h * 0.55)
     this.tracker.update(found, w, h, atMs)
 
     const visible = this.tracker.confirmed.filter((t) => t.missed === 0).length
@@ -346,7 +356,9 @@ export class RobotFleet {
       } else {
         this.lastCount = Math.max(this.lastCount, visible)
         const held: RobotSighting = {
-          x: this.predX, y: this.predY, r: this.lastGood?.r ?? 0.03,
+          x: this.predX, y: this.predY,
+          r: this.lastGood?.r ?? 0.03,
+          w: this.lastGood?.w ?? 0.07, h: this.lastGood?.h ?? 0.05,
           at: atMs, confidence: 0, id: this.selectedId ?? -1,
           selected: true, merged: true,
         }
@@ -448,6 +460,24 @@ export class RobotFleet {
   /** The frame being processed, so candidates can be compared to the photo. */
   private frame: ImageData | null = null
 
+  /**
+   * The lock's appearance with its size band resolved against this frame.
+   *
+   * A signature built from a photograph carries no usable pixel sizes — see
+   * `minRadiusFrac` — so the band is applied here, where the frame width is
+   * finally known.
+   */
+  private effectiveLook(w: number): Appearance {
+    const look = this.lock!.appearance
+    const sig = this.lock!.signature
+    if (!sig) return look
+    return {
+      ...look,
+      minRadius: Math.max(2, Math.round(sig.minRadiusFrac * w)),
+      maxRadius: Math.max(6, Math.round(sig.maxRadiusFrac * w)),
+    }
+  }
+
   /** Frame size of the last update, so `robots` can normalise without args. */
   private w = 1
   private h = 1
@@ -458,6 +488,8 @@ export class RobotFleet {
       x: t.x / this.w,
       y: t.y / this.h,
       r: t.radius / this.w,
+      w: t.boxW / this.w,
+      h: t.boxH / this.h,
       at: this.at,
       confidence: Math.min(1, 0.5 + t.score * 0.5),
       id: t.id,
