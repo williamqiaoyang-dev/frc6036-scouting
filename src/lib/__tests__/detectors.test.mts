@@ -35,9 +35,14 @@ const ballLook = {
   hue: orange, hueTolerance: 20, minSaturation: 0.35, minValue: 0.25,
   minRadius: 5, maxRadius: 30, minCircularity: 0.62, maxCircularity: 1, groundY: 0.80,
 }
+// `radius` is the *minor* half-axis of a blob — half its shorter side —
+// rather than the mean of both. That is what makes a ball smeared by motion
+// still measure its true size instead of an inflated one, and it means the
+// size band for a slab is set by the bumper's height. These robots are 45x19,
+// so their radius is 9.5.
 const robotLook = {
   hue: red, hueTolerance: 22, minSaturation: 0.4, minValue: 0.18,
-  minRadius: 10, maxRadius: 90, minCircularity: 0.08, maxCircularity: 0.6, groundY: 0.99,
+  minRadius: 8, maxRadius: 90, minCircularity: 0.08, maxCircularity: 0.6, groundY: 0.99,
 }
 
 // upper-middle box

@@ -1,4 +1,8 @@
-import { detectBlobs, pointInZone, type Appearance, type Detection } from './vision'
+import {
+  detectBlobs, pointInZone, zoneCentre,
+  type Appearance, type Detection,
+} from './vision'
+import { Tracker, headingTowards, speedOf, type Track } from './tracker'
 import type { Phase } from '@/games/types'
 
 /**
@@ -20,10 +24,17 @@ import type { Phase } from '@/games/types'
  *   dwell      the thing stayed here a while           (a robot camped on defense)
  *   still      the thing stopped moving                (a robot died)
  *
- * What this cannot do is say *which* robot. Nothing here reads a bumper
- * number, so every detector is scoped to the one robot the scout says they
- * are watching. Claiming otherwise would put invented attributions into a
- * picklist, which is worse than no data.
+ * What this cannot do on its own is say *which* robot: nothing here reads a
+ * bumper number. `robotLock.ts` answers that geometrically — the scout
+ * points at one robot and a shot leaving it is credited to it — and every
+ * event below carries where and when its track began so that credit can be
+ * worked out after the fact.
+ *
+ * One thing changed here that matters more than the rules: a detector with
+ * no area drawn now still *looks*, and reports what it sees, even though it
+ * can never fire. The old version returned early, so a scout tuning colour
+ * against a real frame saw a blank overlay and no way to tell a wrong hue
+ * from a wrong area. Seeing is free; firing is what needs the guard rails.
  */
 
 export type DetectorRule = 'enter' | 'exit' | 'vanish-in' | 'dwell' | 'still'
@@ -65,113 +76,122 @@ export interface Detector {
   /** `vanish-in`: how far the thing must have travelled to count. */
   minTravelPx: number
   confidence: Confidence
+
+  /**
+   * Frames a thing must be seen before it may fire anything. Optional so a
+   * saved setup keeps loading; 2 is enough to kill single-frame colour noise.
+   */
+  minHits?: number
+  /**
+   * `vanish-in`: how directly the thing must have been travelling at the
+   * area, -1 to 1. A shot is aimed; a ball rolling past the hub is not.
+   * 0 accepts anything approaching at all, which is the safe default.
+   */
+  minApproach?: number
+  /** Minimum pixels per frame, to ignore things that are not going anywhere. */
+  minSpeedPx?: number
 }
 
 export interface DetectorEvent {
   detectorId: string
+  /**
+   * The rule that fired. Carried because crediting an event to a robot means
+   * something different depending on it: for a ball rule the question is
+   * "did this ball leave that robot", for a robot rule it is "is this thing
+   * that robot".
+   */
+  rule: DetectorRule
   /** Seconds into the match or video. */
   t: number
   /** Normalised position where it fired. */
   x: number
   y: number
-}
-
-interface Track {
-  id: number
-  x: number
-  y: number
-  radius: number
+  /**
+   * Where and when this thing's track *began*, normalised and in seconds.
+   * For a shot, that is roughly where it left the shooter — which is what
+   * credits it to a robot.
+   */
   originX: number
   originY: number
-  /** Where the track was when it last moved appreciably, and when. */
-  restX: number
-  restY: number
-  restSince: number
-  missed: number
-  age: number
-  inZone: boolean
-  everInZone: boolean
-  /** When the track first entered the zone, for `dwell`. */
-  inZoneSince: number
-  counted: boolean
+  originT: number
+  /** 0-1: how sure the detector is, from colour fit, shape and track age. */
+  confidence: number
+  /** The track that produced it, for de-duplicating a re-scan. */
+  trackId: number
 }
 
 /**
- * One detector's state across frames. Tracks blobs and applies the rule.
+ * One detector's state across frames. Finds blobs, tracks them, applies the
+ * rule.
  */
 class DetectorState {
-  private tracks: Track[] = []
-  private nextId = 1
+  private tracker = new Tracker()
   private lastFiredAt = -Infinity
 
   constructor(public detector: Detector) {}
 
   latest: Detection[] = []
+  /** Confirmed tracks, exposed so the overlay can draw flight paths. */
+  paths: Track[] = []
 
   reset() {
-    this.tracks = []
+    this.tracker.reset()
     this.lastFiredAt = -Infinity
     this.latest = []
+    this.paths = []
+  }
+
+  /**
+   * Look at a frame without believing anything about it.
+   *
+   * Scrubbing a video, sampling a colour or aiming at a robot all need the
+   * detector to report what it can see in the frame on screen. Running the
+   * full update for that would advance every track and fire real rules, so
+   * dragging the scrub bar would manufacture shots that never happened.
+   */
+  observe(frame: ImageData, _w: number, _h: number) {
+    const d = this.detector
+    this.latest = d.enabled ? detectBlobs(frame, d.appearance) : []
   }
 
   update(frame: ImageData, w: number, h: number, atMs: number): DetectorEvent[] {
     const d = this.detector
-    if (!d.enabled || d.zone.length < 3) { this.latest = []; return [] }
+    if (!d.enabled) { this.latest = []; this.paths = []; return [] }
 
     const found = detectBlobs(frame, d.appearance)
     this.latest = found
+
+    this.tracker.configure({
+      minHits: d.minHits ?? 2,
+      maxMissed: d.maxMissedFrames,
+      stillPx: d.stillPx,
+    })
+    this.tracker.update(found, w, h, atMs)
+    this.paths = this.tracker.confirmed
+
+    // A detector with no area drawn watches, and shows what it watches, but
+    // can never fire. That is the whole point of the area.
+    const armed = d.zone.length >= 3
+    if (!armed) return []
+
+    const centre = zoneCentre(d.zone)
     const events: DetectorEvent[] = []
-    const inZone = (det: Detection) => pointInZone(det.x / w, det.y / h, d.zone)
 
-    // ---- associate detections with existing tracks ----------------------
-    const unmatched = new Set(found.map((_, i) => i))
-    for (const track of this.tracks) {
-      let best = -1
-      let bestDist = Infinity
-      const gate = Math.max(40, track.radius * 4)
-
-      found.forEach((det, i) => {
-        if (!unmatched.has(i)) return
-        const dist = Math.hypot(det.x - track.x, det.y - track.y)
-        if (dist < bestDist && dist <= gate) { bestDist = dist; best = i }
-      })
-
-      if (best < 0) { track.missed++; continue }
-
-      const det = found[best]
-      unmatched.delete(best)
-      const moved = Math.hypot(det.x - track.restX, det.y - track.restY)
-      if (moved > d.stillPx) {
-        track.restX = det.x; track.restY = det.y; track.restSince = atMs
-      }
-      track.x = det.x; track.y = det.y; track.radius = det.radius
-      track.missed = 0
-      track.age++
-
-      const nowIn = inZone(det)
-      if (nowIn && !track.inZone) track.inZoneSince = atMs
-      track.inZone = nowIn
-      if (nowIn) track.everInZone = true
-    }
-
-    for (const i of unmatched) {
-      const det = found[i]
-      const nowIn = inZone(det)
-      this.tracks.push({
-        id: this.nextId++,
-        x: det.x, y: det.y, radius: det.radius,
-        originX: det.x, originY: det.y,
-        restX: det.x, restY: det.y, restSince: atMs,
-        missed: 0, age: 1,
-        inZone: nowIn, everInZone: nowIn, inZoneSince: nowIn ? atMs : 0,
-        counted: false,
-      })
+    // ---- keep each track's zone bookkeeping up to date -------------------
+    for (const t of this.tracker.tracks) {
+      const nowIn = t.missed === 0 && pointInZone(t.x / w, t.y / h, d.zone)
+      if (nowIn && !t.inZone) t.inZoneSince = atMs
+      t.inZone = nowIn
+      if (nowIn) t.everInZone = true
     }
 
     // ---- apply the rule --------------------------------------------------
-    for (const t of this.tracks) {
+    for (const t of this.tracker.confirmed) {
       if (t.counted) continue
-      if (atMs - this.lastFiredAt < d.cooldownMs) break
+      // A cooldown suppresses *this* track's turn, not the rest of the list:
+      // breaking out here used to throw away a second, genuine event that
+      // happened to land in another track during the quiet window.
+      if (atMs - this.lastFiredAt < d.cooldownMs) continue
 
       let fires = false
       switch (d.rule) {
@@ -180,13 +200,10 @@ class DetectorState {
           break
         case 'exit':
           // Left the area it started in, and is now demonstrably outside.
-          fires = t.everInZone && !t.inZone && t.age > 1
+          fires = t.everInZone && !t.inZone && t.missed === 0 && t.age > 1
           break
         case 'vanish-in':
-          fires = t.everInZone
-            && t.missed >= d.maxMissedFrames
-            && Math.hypot(t.x - t.originX, t.y - t.originY) >= d.minTravelPx
-            && pointInZone(t.x / w, t.y / h, d.zone)
+          fires = this.wentIn(t, w, h, centre)
           break
         case 'dwell':
           // `inZone` is the guard, not a non-zero timestamp: a track that
@@ -195,20 +212,66 @@ class DetectorState {
           fires = t.inZone && atMs - t.inZoneSince >= d.dwellSec * 1000
           break
         case 'still':
-          fires = t.missed === 0 && atMs - t.restSince >= d.dwellSec * 1000
+          fires = t.missed === 0 && t.everInZone
+            && atMs - t.restSince >= d.dwellSec * 1000
           break
       }
 
       if (!fires) continue
       t.counted = true
       this.lastFiredAt = atMs
-      events.push({ detectorId: d.id, t: atMs / 1000, x: t.x / w, y: t.y / h })
+      events.push({
+        detectorId: d.id,
+        rule: d.rule,
+        t: atMs / 1000,
+        x: t.x / w, y: t.y / h,
+        originX: t.originX / w, originY: t.originY / h,
+        originT: t.originAt / 1000,
+        confidence: confidenceOf(t),
+        trackId: t.id,
+      })
     }
 
-    // ---- retire dead tracks ---------------------------------------------
-    this.tracks = this.tracks.filter((t) => t.missed <= d.maxMissedFrames * 2)
     return events
   }
+
+  /**
+   * Did this track go *into* the area, rather than merely end near it?
+   *
+   * A ball that scores stops being visible, in the goal, having been
+   * travelling at it. Requiring all three is what separates a shot from a
+   * ball that rolled behind the hub, and from one the camera simply lost.
+   */
+  private wentIn(
+    t: Track, w: number, h: number, centre: { x: number; y: number },
+  ): boolean {
+    const d = this.detector
+    if (!t.everInZone) return false
+    if (t.missed < d.maxMissedFrames) return false
+
+    const travelled = Math.hypot(t.x - t.originX, t.y - t.originY)
+    if (travelled < d.minTravelPx) return false
+
+    const minSpeed = d.minSpeedPx ?? 0
+    if (minSpeed > 0 && speedOf(t) < minSpeed) return false
+
+    // Where it was last actually seen, rather than where coasting has since
+    // carried it — a coasted position drifts straight out of the goal.
+    const seen = t.path[t.path.length - 1]
+    const lastIn = seen ? pointInZone(seen.x, seen.y, d.zone) : false
+    const headed = headingTowards(t, centre.x * w, centre.y * h)
+
+    // In the goal when last seen is the strong case. Lost just short of it
+    // while flying straight at it is the honest second case — that is what a
+    // ball disappearing into a dark opening looks like.
+    return lastIn || headed >= Math.max(0.55, d.minApproach ?? 0.55)
+  }
+}
+
+/** 0-1, from how well the thing matched and how long it was followed. */
+function confidenceOf(t: Track): number {
+  const seen = Math.min(1, t.hits / 8)
+  return Math.max(0, Math.min(1, t.score * 0.65 + seen * 0.35))
 }
 
 /** Runs every enabled detector over the same frame. */
@@ -236,9 +299,19 @@ export class DetectorEngine {
     return out
   }
 
+  /** Look without tracking or firing — see `DetectorState.observe`. */
+  observe(frame: ImageData, w: number, h: number) {
+    for (const s of this.states) s.observe(frame, w, h)
+  }
+
   /** Everything every enabled detector can currently see, for the overlay. */
   detections(): { detectorId: string; detections: Detection[] }[] {
     return this.states.map((s) => ({ detectorId: s.detector.id, detections: s.latest }))
+  }
+
+  /** Confirmed tracks per detector, so the overlay can draw flight paths. */
+  paths(): { detectorId: string; tracks: Track[] }[] {
+    return this.states.map((s) => ({ detectorId: s.detector.id, tracks: s.paths }))
   }
 }
 

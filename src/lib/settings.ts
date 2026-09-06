@@ -75,16 +75,59 @@ export function saveVisionConfig(config: unknown) {
  * pointed, so they cannot be shared between scouts. Stored per game so a
  * new season starts from its own presets rather than last year's polygons.
  */
+
+/**
+ * Bumped whenever the shipped tuning changes in a way that makes a saved
+ * setup wrong rather than merely different.
+ *
+ * This exists because of a real failure: the thresholds shipped with the
+ * first build could not detect a FUEL ball at all — the minimum blob size
+ * was larger than a ball at the far end of the field — and a saved setup
+ * would have carried those numbers forward forever, so the fix would have
+ * reached nobody who had already opened the page. On a version bump the
+ * work a scout actually did by hand is kept and every threshold is re-seeded
+ * from the presets.
+ */
+const TUNING_VERSION = 2
+
+/** What survives a re-seed: the things a person drew or chose, not numbers. */
+const HAND_MADE = ['zone', 'enabled', 'rule'] as const
+
 export function loadDetectors<T extends { id: string }>(gameId: string, presets: T[]): T[] {
   try {
     const raw = localStorage.getItem(`detectors_${gameId}`)
     if (!raw) return presets
-    const saved = JSON.parse(raw) as T[]
+    const stored = JSON.parse(raw) as { version?: number; detectors?: T[] } | T[]
+
+    // Before versioning, the array was stored bare. Treat that as version 1.
+    const version = Array.isArray(stored) ? 1 : stored.version ?? 1
+    const saved = (Array.isArray(stored) ? stored : stored.detectors ?? []) as T[]
     const byId = new Map(saved.map((d) => [d.id, d]))
+
     // Presets are the source of truth for which detectors exist; storage
     // only supplies what the scout changed. A detector added in a new build
     // therefore appears, and one removed from the game config disappears.
-    return presets.map((p) => ({ ...p, ...(byId.get(p.id) ?? {}) }))
+    return presets.map((p) => {
+      const mine = byId.get(p.id)
+      if (!mine) return p
+      if (version < TUNING_VERSION) {
+        const kept: Record<string, unknown> = {}
+        for (const key of HAND_MADE) {
+          if (key in (mine as object)) kept[key] = (mine as Record<string, unknown>)[key]
+        }
+        return { ...p, ...kept } as T
+      }
+      // `appearance` is merged rather than replaced, so a threshold added in
+      // a new build reaches a scout who had already saved a setup.
+      const preset = p as unknown as { appearance?: object }
+      const theirs = mine as unknown as { appearance?: object }
+      return {
+        ...p, ...mine,
+        ...(preset.appearance
+          ? { appearance: { ...preset.appearance, ...(theirs.appearance ?? {}) } }
+          : {}),
+      } as T
+    })
   } catch {
     return presets
   }
@@ -92,6 +135,7 @@ export function loadDetectors<T extends { id: string }>(gameId: string, presets:
 
 export function saveDetectors(gameId: string, detectors: unknown) {
   try {
-    localStorage.setItem(`detectors_${gameId}`, JSON.stringify(detectors))
+    localStorage.setItem(`detectors_${gameId}`,
+      JSON.stringify({ version: TUNING_VERSION, detectors }))
   } catch { /* private mode or quota; setup simply will not persist */ }
 }

@@ -28,15 +28,28 @@ const CONFIDENCE: Record<string, { label: string; className: string }> = {
  * and ship switched off.
  */
 export function DetectorList({
-  detectors, onChange, counts, drawing, onDraw, onSample, targetLabel,
+  detectors, onChange, counts, seeing, drawing, onDraw, onCover, onSample, targetLabel,
 }: {
   detectors: Detector[]
   onChange: (next: Detector[]) => void
   /** How many times each detector has fired this session. */
   counts: Record<string, number>
+  /**
+   * How many blobs each detector can see in the current frame, whether or
+   * not it has an area to fire in.
+   *
+   * This is the number that makes tuning possible. A detector with the
+   * colour set wrong and a detector with the area drawn wrong both produce
+   * zero events, and without this they look identical — which is exactly
+   * how "it never detects anything" happens and stays unexplained.
+   */
+  seeing?: Record<string, number>
   /** Id of the detector whose area is being drawn, if any. */
   drawing: string | null
-  onDraw: (id: string) => void
+  /** Start drawing an area: two clicks for a box, or a traced polygon. */
+  onDraw: (id: string, mode: 'box' | 'poly') => void
+  /** Give the detector the whole picture, for checking it can see anything. */
+  onCover?: (id: string) => void
   onSample: (id: string) => void
   /** Human name of the form field a detector feeds. */
   targetLabel: (d: Detector) => string
@@ -84,12 +97,31 @@ export function DetectorList({
                 <p className="mt-0.5 text-[12px] leading-tight text-chalk-faint">{d.hint}</p>
 
                 <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                  <button type="button" onClick={() => onDraw(d.id)}
+                  {/*
+                    Box first: a goal opening is a rectangle, and two clicks
+                    that finish themselves is the difference between a
+                    detector that gets an area and one that never does.
+                  */}
+                  <button type="button" onClick={() => onDraw(d.id, 'box')}
                     className={clsx('h-7 rounded-panel border px-2 text-[12px] font-600 transition',
                       ready ? 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk'
                         : 'border-signal/60 text-signal hover:bg-signal/10')}>
-                    {ready ? 'Redraw area' : 'Draw its area'}
+                    {ready ? 'Redraw box' : 'Draw a box'}
                   </button>
+                  <button type="button" onClick={() => onDraw(d.id, 'poly')}
+                    title="Click each corner, then Finish. For an area a rectangle cannot describe."
+                    className="h-7 rounded-panel border border-deck-500 px-2 text-[12px] font-600
+                               text-chalk-dim transition hover:bg-deck-600 hover:text-chalk">
+                    Trace
+                  </button>
+                  {onCover && (
+                    <button type="button" onClick={() => onCover(d.id)}
+                      title="Counts anywhere in the picture, so it over-counts. Use it to prove the colour works, then draw the real area."
+                      className="h-7 rounded-panel border border-deck-500 px-2 text-[12px] font-600
+                                 text-chalk-dim transition hover:bg-deck-600 hover:text-chalk">
+                      Whole frame
+                    </button>
+                  )}
                   <button type="button" onClick={() => onSample(d.id)}
                     className="h-7 rounded-panel border border-deck-500 px-2 text-[12px] font-600
                                text-chalk-dim transition hover:bg-deck-600 hover:text-chalk">
@@ -97,6 +129,13 @@ export function DetectorList({
                   </button>
                   {!ready && (
                     <span className="text-[11px] text-signal">no area — can't fire</span>
+                  )}
+                  {d.enabled && seeing && (
+                    <span className={clsx('text-[11px]',
+                      seeing[d.id] ? 'text-emerald-300' : 'text-chalk-faint')}
+                      title="What this detector can pick out of the frame right now. If this is zero, the colour or size is wrong — not the area.">
+                      sees {seeing[d.id] ?? 0} now
+                    </span>
                   )}
                 </div>
               </div>

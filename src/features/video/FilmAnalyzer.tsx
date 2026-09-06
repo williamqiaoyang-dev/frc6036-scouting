@@ -12,7 +12,10 @@ import { MARKER_COLORS, type PlayerHandle } from './VideoPlayer'
 import { DetectorList, detectorColor } from '@/features/vision/DetectorList'
 import { DetectorTuning } from '@/features/vision/DetectorTuning'
 import { drawDetectorOverlay, type Point } from '@/features/vision/overlay'
-import { useDetectors } from '@/features/vision/useDetectors'
+import {
+  useDetectors, DEFAULT_PROC_WIDTH, PROC_WIDTHS, type ShotCredit,
+} from '@/features/vision/useDetectors'
+import type { RobotLock } from '@/lib/robotLock'
 
 type Source =
   | { kind: 'none' }
@@ -20,7 +23,12 @@ type Source =
   | { kind: 'url'; url: string }
   | { kind: 'screen'; stream: MediaStream }
 
-interface Hit extends DetectorEvent { key: number; team: number | null }
+interface Hit extends DetectorEvent {
+  key: number
+  team: number | null
+  /** How the tracked robot was credited, when one was locked. */
+  credit: ShotCredit
+}
 
 /**
  * Reads a match off film instead of off a live camera.
@@ -80,7 +88,23 @@ export function FilmAnalyzer({
   const [cameBack, setCameBack] = useState(false)
   const [surfaceNote, setSurfaceNote] = useState('')
 
+  const [procWidth, setProcWidth] = useState<number>(DEFAULT_PROC_WIDTH)
+  const [lock, setLock] = useState<RobotLock | null>(null)
+  const [locking, setLocking] = useState(false)
+  const [onlyTracked, setOnlyTracked] = useState(false)
+
   const [drawing, setDrawing] = useState<string | null>(null)
+  /**
+   * Two clicks for a box, or a traced polygon.
+   *
+   * Box is the default because a goal opening is a rectangle and because
+   * the polygon path needed three clicks plus a separate Finish, in a
+   * column beside the video — enough friction that people never got an area
+   * drawn at all, and every scan stayed disabled.
+   */
+  const [drawMode, setDrawMode] = useState<'box' | 'poly'>('box')
+  /** Pointer position while drawing a box, for a rubber-band preview. */
+  const [hover, setHover] = useState<Point | null>(null)
   const [sampling, setSampling] = useState<string | null>(null)
   const [draft, setDraft] = useState<Point[]>([])
   const [tuned, setTuned] = useState(game.detectors[0]?.id ?? '')
@@ -98,25 +122,41 @@ export function FilmAnalyzer({
   function setDetectors(next: Detector[]) {
     setDetectorState(next)
     saveDetectors(game.id, next)
+    // Re-read the frame on screen so a threshold change shows immediately.
+    // Tuning against a frozen overlay is guesswork.
+    if (!running) queueMicrotask(() => previewFrame())
   }
 
-  const onEvent = useCallback((e: DetectorEvent) => {
+  const onEvent = useCallback((e: DetectorEvent, credit: ShotCredit) => {
     setHits((prev) => {
       // Re-scanning a stretch should refine the list, not pile duplicates on.
       if (prev.some((p) => p.detectorId === e.detectorId && Math.abs(p.t - e.t) < 0.35)) return prev
-      return [...prev, { ...e, key: hitKey.current++, team: null }].sort((a, b) => a.t - b.t)
+      // The team comes from where the ball *started*, not from the dropdown:
+      // a shot that did not leave the followed robot stays unassigned rather
+      // than being credited to whoever happened to be selected.
+      const hit: Hit = { ...e, key: hitKey.current++, team: credit.team, credit }
+      return [...prev, hit].sort((a, b) => a.t - b.t)
     })
   }, [])
 
-  const { detections, blocked, sampleAt, reset, processFrame, procWidth, procHeight } =
-    useDetectors({
-      video, detectors,
-      // Only a stream needs the live loop; a file is scanned by seeking,
-      // which keeps working when the tab is in the background.
-      liveLoop: running && source.kind === 'screen',
-      track: source.kind === 'screen' ? source.stream.getVideoTracks()[0] : null,
-      onEvent,
-    })
+  const {
+    detections, paths, robot, blocked, sampleAt, learnRobotAt,
+    reset, processFrame, previewFrame, procHeight,
+  } = useDetectors({
+    video, detectors, procWidth, robotLock: lock,
+    // Only a stream needs the live loop; a file is scanned by seeking,
+    // which keeps working when the tab is in the background.
+    liveLoop: running && source.kind === 'screen',
+    track: source.kind === 'screen' ? source.stream.getVideoTracks()[0] : null,
+    onEvent,
+  })
+
+  /** How many blobs each detector can see right now, zone or no zone. */
+  const seeing = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const g of detections) out[g.detectorId] = g.detections.length
+    return out
+  }, [detections])
 
   // ---- sources -----------------------------------------------------------
   function openFile(file: File) {
@@ -294,11 +334,14 @@ export function FilmAnalyzer({
     const stepSec = 1 / 30
 
     try {
+      let frames = 0
       for (let t = v.currentTime; t < total && scanRef.current; t += stepSec) {
         v.currentTime = t
         await seeked(v)
         processFrame()
-        setProgress(total ? t / total : 0)
+        // Re-rendering the whole panel for every frame of a two-minute match
+        // costs more than reading the frames does.
+        if (frames++ % 12 === 0) setProgress(total ? t / total : 0)
       }
     } finally {
       scanRef.current = false
@@ -314,20 +357,61 @@ export function FilmAnalyzer({
   }
 
   // ---- overlay -----------------------------------------------------------
+  /**
+   * What to draw as the in-progress area. For a box that is the rectangle
+   * the second click would commit, so the area is visible before it exists
+   * rather than after.
+   */
+  const preview = useMemo<Point[]>(() => {
+    if (drawMode !== 'box' || draft.length !== 1 || !hover) return draft
+    const a = draft[0]
+    return [
+      { x: a.x, y: a.y }, { x: hover.x, y: a.y },
+      { x: hover.x, y: hover.y }, { x: a.x, y: hover.y },
+      { x: a.x, y: a.y },
+    ]
+  }, [draft, hover, drawMode])
+
   useEffect(() => {
     const canvas = overlayRef.current
     if (!canvas) return
     drawDetectorOverlay(canvas, {
       detectors, colorOf: (id) => detectorColor(detectors, id),
-      seen: detections, draft, drawingId: drawing, procWidth, procHeight,
+      seen: detections, paths, robot, robotTeam: lock?.team ?? null,
+      draft: preview, drawingId: drawing, procWidth, procHeight,
     })
-  }, [detections, detectors, draft, drawing, procWidth, procHeight])
+  }, [detections, paths, robot, lock, detectors, preview, drawing, procWidth, procHeight])
 
   function onCanvasClick(e: React.MouseEvent<HTMLCanvasElement>) {
     const r = e.currentTarget.getBoundingClientRect()
     const p = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }
 
-    if (drawing) { setDraft((d) => [...d, p]); return }
+    if (drawing) {
+      if (drawMode === 'poly') { setDraft((d) => [...d, p]); return }
+      // Box: first click sets a corner, second closes it.
+      if (!draft.length) { setDraft([p]); return }
+      const a = draft[0]
+      applyZone(drawing, [
+        { x: Math.min(a.x, p.x), y: Math.min(a.y, p.y) },
+        { x: Math.max(a.x, p.x), y: Math.min(a.y, p.y) },
+        { x: Math.max(a.x, p.x), y: Math.max(a.y, p.y) },
+        { x: Math.min(a.x, p.x), y: Math.max(a.y, p.y) },
+      ])
+      return
+    }
+
+    if (locking) {
+      const appearance = learnRobotAt(p.x, p.y)
+      if (!appearance) {
+        setError('Could not pick a robot out there. Click the middle of its bumper, on a frame where you can see it clearly.')
+        return
+      }
+      setLock({ team, alliance: team && match.red.includes(team) ? 'red' : team ? 'blue' : '', appearance })
+      setLocking(false)
+      setError('')
+      return
+    }
+
     if (sampling) {
       const s = sampleAt(p.x, p.y)
       if (s && s.value > 0.08) {
@@ -336,8 +420,13 @@ export function FilmAnalyzer({
           appearance: {
             ...d.appearance,
             hue: Math.round(s.hue),
-            minSaturation: Math.max(0.15, s.saturation * 0.55),
-            minValue: Math.max(0.12, s.value * 0.45),
+            // The tolerance comes from how much the colour actually varied
+            // across the thing, not from a constant: a matte ball under flat
+            // light and the same ball under arena spotlights need very
+            // different windows, and a scout cannot tell which they have.
+            hueTolerance: Math.round(Math.max(10, Math.min(48, s.hueSpread * 1.5 + 8))),
+            minSaturation: Math.max(0.14, s.saturation * 0.5),
+            minValue: Math.max(0.1, s.value * 0.4),
           },
         } : d))
         setSampling(null)
@@ -345,26 +434,60 @@ export function FilmAnalyzer({
     }
   }
 
-  function finishZone() {
-    if (drawing && draft.length >= 3) {
-      setDetectors(detectors.map((d) => d.id === drawing ? { ...d, zone: draft, enabled: true } : d))
-    }
+  /** Commit an area to a detector and switch it on. */
+  function applyZone(id: string, zone: Point[]) {
+    setDetectors(detectors.map((d) => d.id === id ? { ...d, zone, enabled: true } : d))
     setDraft([])
+    setHover(null)
     setDrawing(null)
     reset()
   }
 
+  function finishZone() {
+    if (drawing && draft.length >= 3) applyZone(drawing, draft)
+    else { setDraft([]); setDrawing(null) }
+  }
+
+  /**
+   * Give a detector the whole picture to work in.
+   *
+   * Not a scoring setup — with the whole frame as its area, "went in" fires
+   * wherever a ball leaves the picture, so it over-counts. It is the fastest
+   * way to prove the detector can see the game piece at all, which is the
+   * question anyone staring at a disabled Scan button actually has. The
+   * warning that offers it says so.
+   */
+  function coverFrame(id: string) {
+    applyZone(id, [{ x: 0.01, y: 0.01 }, { x: 0.99, y: 0.01 },
+                   { x: 0.99, y: 0.99 }, { x: 0.01, y: 0.99 }])
+  }
+
+  function startDrawing(id: string, mode: 'box' | 'poly') {
+    setSampling(null); setLocking(false); setDraft([]); setHover(null)
+    setDrawMode(mode); setDrawing(id)
+  }
+
   // Sampling needs a frame in hand; pull one so a paused video can be used.
-  useEffect(() => { if (sampling) processFrame() }, [sampling, processFrame])
+  useEffect(() => { if (sampling || locking) previewFrame() }, [sampling, locking, previewFrame])
 
   // ---- results -----------------------------------------------------------
   const counts = useMemo(() => {
     const c: Record<string, number> = {}
-    for (const h of hits) c[h.detectorId] = (c[h.detectorId] ?? 0) + 1
+    for (const h of hits) {
+      if (onlyTracked && lock && h.team !== lock.team) continue
+      c[h.detectorId] = (c[h.detectorId] ?? 0) + 1
+    }
     return c
-  }, [hits])
+  }, [hits, onlyTracked, lock])
 
-  const assigned = hits.map((h) => ({ ...h, team: h.team ?? team }))
+  // Without a lock the dropdown supplies the attribution, as before. With
+  // one, a hit already carries whatever the geometry could prove, and the
+  // dropdown is not allowed to overwrite a rejection with a guess.
+  const assigned = hits.map((h) => ({ ...h, team: h.team ?? (lock ? null : team) }))
+  const shown = onlyTracked && lock
+    ? assigned.filter((h) => h.team === lock.team)
+    : assigned
+  const rejected = hits.filter((h) => h.credit.rejected).length
 
   function targetLabel(d: Detector): string {
     if (d.target.kind === 'flag') return 'died on field'
@@ -378,7 +501,7 @@ export function FilmAnalyzer({
   }
 
   async function saveAsMarkers() {
-    const rows = assigned.filter((h) => h.team)
+    const rows = shown.filter((h) => h.team)
     for (const h of rows) {
       const d = detectors.find((x) => x.id === h.detectorId)
       await saveMarker({
@@ -391,7 +514,12 @@ export function FilmAnalyzer({
         t: h.t,
         teamNumber: h.team,
         tag: 'shot',
-        note: `${d?.label ?? h.detectorId} — detected from film`,
+        // The note carries how sure the detector was and how the team was
+        // arrived at, because a marker a human later disagrees with is far
+        // easier to judge when it says what it was built on.
+        note: `${d?.label ?? h.detectorId} — detected from film`
+          + ` (${Math.round(h.confidence * 100)}% sure`
+          + `${h.credit.team ? `, from the tracked robot` : ''})`,
         author: author || 'anonymous',
         createdAt: Date.now(),
         synced: false,
@@ -407,7 +535,7 @@ export function FilmAnalyzer({
     <Panel
       title="Detection from film"
       right={<span className="text-[12px] text-chalk-faint">
-        {hits.length} found
+        {shown.length} found
         {progress !== null && ` · scanning ${Math.round(progress * 100)}%`}
         {running && progress === null && ' · watching'}
       </span>}
@@ -521,18 +649,32 @@ export function FilmAnalyzer({
               <video ref={videoRef} playsInline muted={source.kind === 'screen'}
                 className="block max-h-[60vh] w-full"
                 onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
+                onLoadedData={() => previewFrame()}
+                onSeeked={() => { if (!running) previewFrame() }}
                 onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
                 onPlay={() => setPlaying(true)}
                 onPause={() => setPlaying(false)}
                 onEnded={() => { setPlaying(false); setRunning(false) }} />
               <canvas ref={overlayRef} onClick={onCanvasClick}
+                onMouseMove={(e) => {
+                  if (!drawing || drawMode !== 'box' || !draft.length) return
+                  const r = e.currentTarget.getBoundingClientRect()
+                  setHover({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height })
+                }}
+                onMouseLeave={() => setHover(null)}
                 className={clsx('absolute inset-0 h-full w-full',
-                  drawing || sampling ? 'cursor-crosshair' : 'cursor-default')} />
-              {(drawing || sampling) && (
+                  drawing || sampling || locking ? 'cursor-crosshair' : 'cursor-default')} />
+              {(drawing || sampling || locking) && (
                 <div className="absolute inset-x-0 top-0 bg-signal px-2 py-1 text-[12px] font-600 text-deck-900">
                   {drawing
-                    ? `Click the corners of the area for “${detectors.find((d) => d.id === drawing)?.label}”, then Finish. ${draft.length} placed.`
-                    : `Click the thing “${detectors.find((d) => d.id === sampling)?.label}” should look for.`}
+                    ? drawMode === 'box'
+                      ? (draft.length
+                          ? `Now click the opposite corner of the area for “${detectors.find((d) => d.id === drawing)?.label}”.`
+                          : `Click one corner of the area for “${detectors.find((d) => d.id === drawing)?.label}”, then the opposite one.`)
+                      : `Click the corners of the area for “${detectors.find((d) => d.id === drawing)?.label}”, then Finish. ${draft.length} placed.`
+                    : sampling
+                      ? `Click the thing “${detectors.find((d) => d.id === sampling)?.label}” should look for.`
+                      : `Click the middle of ${team}'s bumper. Pick a frame where you can see it clearly.`}
                 </div>
               )}
             </div>
@@ -597,8 +739,15 @@ export function FilmAnalyzer({
             <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-deck-600 pt-3">
               {drawing ? (
                 <>
-                  <button type="button" onClick={finishZone} disabled={draft.length < 3}
-                    className="btn-primary h-8 py-0 text-[13px] disabled:opacity-30">Finish area</button>
+                  {drawMode === 'poly' && (
+                    <button type="button" onClick={finishZone} disabled={draft.length < 3}
+                      className="btn-primary h-8 py-0 text-[13px] disabled:opacity-30">Finish area</button>
+                  )}
+                  {drawMode === 'box' && (
+                    <span className="text-[13px] text-signal">
+                      {draft.length ? 'Click the opposite corner.' : 'Click one corner of the goal.'}
+                    </span>
+                  )}
                   <button type="button" onClick={() => { setDraft([]); setDrawing(null) }}
                     className="btn-ghost h-8 py-0 text-[13px]">Cancel</button>
                 </>
@@ -614,12 +763,89 @@ export function FilmAnalyzer({
                 className="btn-ghost h-8 py-0 text-[13px]">Clear results</button>
 
               <select className="input h-8 w-auto py-0 text-[13px]"
-                value={team ?? ''} onChange={(e) => setTeam(e.target.value ? Number(e.target.value) : null)}>
+                value={team ?? ''}
+                onChange={(e) => {
+                  const next = e.target.value ? Number(e.target.value) : null
+                  setTeam(next)
+                  // Changing who you are watching invalidates a lock that was
+                  // learned from a different robot's bumper.
+                  setLock(null)
+                  setLocking(false)
+                }}>
                 <option value="">Watching which robot?</option>
                 {teams.map((t) => (
                   <option key={t} value={t}>{t} · {match.red.includes(t) ? 'red' : 'blue'}</option>
                 ))}
               </select>
+
+              <label className="flex items-center gap-1 text-[12px] text-chalk-faint"
+                title="Higher finds smaller things — a ball at the far end of the field — and costs more time per frame.">
+                Detail
+                <select className="input h-8 w-auto py-0 text-[13px]" value={procWidth}
+                  onChange={(e) => { setProcWidth(Number(e.target.value)); reset() }}>
+                  {PROC_WIDTHS.map((px) => (
+                    <option key={px} value={px}>{px}px</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {/* ---- following one robot -------------------------------------- */}
+            {/*
+              Nothing here reads a bumper number, so "which robot scored" can
+              only ever be answered geometrically: point at the robot once,
+              and a ball whose flight *began* at it is its shot. That is a
+              real claim rather than an assumption, which is why a ball that
+              set off from somewhere else is left unassigned instead of being
+              credited to whoever is selected in the dropdown.
+            */}
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-panel
+                            border border-deck-600 bg-deck-900 px-2 py-1.5">
+              <span className="label">Track a robot's shooting</span>
+              <button type="button"
+                disabled={!team}
+                onClick={() => { setLocking((v) => !v); setDrawing(null); setSampling(null); setDraft([]) }}
+                className={clsx('h-7 rounded-panel border px-2 text-[12px] font-600 transition disabled:opacity-30',
+                  locking ? 'border-signal bg-signal/20 text-signal'
+                    : lock ? 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk'
+                      : 'border-signal/60 text-signal hover:bg-signal/10')}>
+                {locking ? 'Click the robot…' : lock ? `Re-point at ${lock.team}` : 'Point at it on the video'}
+              </button>
+
+              {!team && (
+                <span className="text-[12px] text-chalk-faint">
+                  pick the team above first
+                </span>
+              )}
+              {team && !lock && !locking && (
+                <span className="text-[12px] text-chalk-faint">
+                  optional — without it every hit is credited to {team}
+                </span>
+              )}
+              {lock && (
+                <>
+                  <span className={clsx('rounded px-1.5 text-[11px] font-600',
+                    robot && robot.confidence >= 0.45
+                      ? 'bg-emerald-400/15 text-emerald-300'
+                      : 'bg-alliance-red/15 text-alliance-red')}>
+                    {robot && robot.confidence >= 0.45 ? `following ${lock.team}` : 'lost it'}
+                  </span>
+                  <label className="flex items-center gap-1 text-[12px] text-chalk-dim">
+                    <input type="checkbox" checked={onlyTracked} className="accent-signal"
+                      onChange={(e) => setOnlyTracked(e.target.checked)} />
+                    only this robot's shots
+                  </label>
+                  {rejected > 0 && (
+                    <span className="text-[12px] text-chalk-faint">
+                      {rejected} came from somewhere else
+                    </span>
+                  )}
+                  <button type="button" onClick={() => { setLock(null); setOnlyTracked(false) }}
+                    className="ml-auto px-1 text-[12px] text-chalk-faint hover:text-alliance-red">
+                    stop following
+                  </button>
+                </>
+              )}
             </div>
 
             {progress !== null && (
@@ -629,13 +855,47 @@ export function FilmAnalyzer({
               </div>
             )}
 
-            {!armed.length && (
-              <p className="mt-2 text-[12px] leading-snug text-signal">
-                No detector has an area drawn yet. Nothing can fire until one does —
-                that is what stops the camera inventing data about a field it has
-                never seen.
-              </p>
-            )}
+            {!armed.length && (() => {
+              // The message used to explain the rule and stop there, with the
+              // controls that satisfy it in a column beside the video. An
+              // explanation of why you are blocked is not much use without
+              // the button that unblocks you, so it is here.
+              const target = detectors.find((d) => d.enabled) ?? detectors[0]
+              const totalSeen = Object.values(seeing).reduce((a, b) => a + b, 0)
+              if (!target) return null
+              return (
+                <div className="mt-2 rounded-panel border border-signal/40 bg-signal/5 p-2">
+                  <p className="text-[12px] leading-snug text-signal">
+                    Nothing can fire until “{target.label}” has an area — that is what
+                    stops the camera inventing data about a field it has never seen.
+                    Give it one:
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <button type="button" onClick={() => startDrawing(target.id, 'box')}
+                      className="btn-primary h-7 py-0 text-[12px]">
+                      Draw a box over the goal
+                    </button>
+                    <button type="button" onClick={() => startDrawing(target.id, 'poly')}
+                      className="btn-ghost h-7 py-0 text-[12px]">
+                      Trace a shape instead
+                    </button>
+                    <button type="button" onClick={() => coverFrame(target.id)}
+                      className="btn-ghost h-7 py-0 text-[12px]"
+                      title="Counts a ball leaving the picture anywhere, so it over-counts. Use it to check the colour is right, then draw the real area.">
+                      Use the whole frame
+                    </button>
+                  </div>
+                  <p className="mt-1.5 text-[12px] leading-snug text-chalk-faint">
+                    {totalSeen > 0
+                      ? `The colour is already working — ${totalSeen} thing${totalSeen === 1 ? '' : 's'} `
+                        + 'picked out of this frame. Only the area is missing.'
+                      : 'Nothing is being picked out of this frame yet either. Use '
+                        + '“Sample colour” on a detector and click the game piece, '
+                        + 'or raise Detail, before worrying about the area.'}
+                  </p>
+                </div>
+              )
+            })()}
             {blocked && (
               <p className="mt-2 text-[12px] leading-snug text-alliance-red">
                 This video's pixels can't be read — it comes from another site. Use a
@@ -670,7 +930,7 @@ export function FilmAnalyzer({
                 )}
 
                 <div className="max-h-56 space-y-1 overflow-y-auto">
-                  {assigned.map((h) => (
+                  {shown.map((h) => (
                     <div key={h.key} className="group flex items-center gap-2 rounded-panel border border-deck-600 px-2 py-1">
                       <button type="button"
                         onClick={() => { const v = videoRef.current; if (v && seekable) v.currentTime = h.t }}
@@ -706,9 +966,11 @@ export function FilmAnalyzer({
               detectors={detectors}
               onChange={setDetectors}
               counts={counts}
+              seeing={seeing}
               drawing={drawing}
-              onDraw={(id) => { setSampling(null); setDraft([]); setDrawing(id) }}
-              onSample={(id) => { setDrawing(null); setDraft([]); setSampling(id) }}
+              onDraw={(id, mode) => startDrawing(id, mode)}
+              onCover={coverFrame}
+              onSample={(id) => { setDrawing(null); setLocking(false); setDraft([]); setSampling(id) }}
               targetLabel={targetLabel}
             />
             <DetectorTuning detectors={detectors} selectedId={tuned} onSelect={setTuned}

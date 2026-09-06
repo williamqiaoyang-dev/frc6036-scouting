@@ -27,10 +27,20 @@ import type { GameConfig } from './types'
  * no guess survives an arena's lighting.
  */
 const FUEL_LOOK = {
-  hue: 30, hueTolerance: 18, minSaturation: 0.35, minValue: 0.25,
-  minRadius: 4, maxRadius: 40,
-  // A ball is round; that is the whole discriminator.
-  minCircularity: 0.62, maxCircularity: 1,
+  hue: 30, hueTolerance: 20, minSaturation: 0.3, minValue: 0.22,
+  // At 640px processing width a FUEL ball is about five pixels across at the
+  // far end of the field and forty in front of the camera. The old floor of
+  // four *radius* pixels was above the far case entirely, which is why a
+  // wide shot from the stands used to detect nothing at all.
+  minRadius: 2, maxRadius: 56,
+  // A ball is round; that is the whole discriminator. The threshold sits
+  // below a perfect circle because a ball in flight is a short capsule.
+  minCircularity: 0.55, maxCircularity: 1,
+  // Recover the shadowed underside, re-fuse a ball a highlight split, and
+  // tolerate the smear of one crossing the frame at speed. Closing bridges
+  // a gap of twice its radius, so 2 reunites a ball a blown-out highlight
+  // cut in half — and is still under the spacing of two balls in flight.
+  edgeSlack: 1.9, close: 2, blurTolerance: 2.6,
   groundY: 0.85,
 }
 
@@ -40,9 +50,13 @@ const FUEL_LOOK = {
  * balls of the same colour.
  */
 const bumperLook = (hue: number) => ({
-  hue, hueTolerance: 22, minSaturation: 0.4, minValue: 0.18,
-  minRadius: 10, maxRadius: 90,
-  minCircularity: 0.08, maxCircularity: 0.6,
+  hue, hueTolerance: 24, minSaturation: 0.34, minValue: 0.16,
+  minRadius: 6, maxRadius: 150,
+  // A slab over-fills its bounding box where a ball fills pi/4 of it, so the
+  // ceiling rejects balls of the same colour without also rejecting a robot
+  // that happens to be square-on to the camera.
+  minCircularity: 0.05, maxCircularity: 0.78,
+  edgeSlack: 1.6, close: 2, blurTolerance: 1.6,
   groundY: 0.99,
 })
 
@@ -50,10 +64,15 @@ const base = {
   zone: [] as { x: number; y: number }[],
   step: 1,
   dwellSec: 2,
-  stillPx: 6,
-  cooldownMs: 220,
-  maxMissedFrames: 6,
-  minTravelPx: 18,
+  stillPx: 8,
+  cooldownMs: 200,
+  maxMissedFrames: 5,
+  // Pixel distances are at 640px processing width, so they are roughly twice
+  // what the same scene measured at the old 320px.
+  minTravelPx: 20,
+  minHits: 2,
+  minApproach: 0.55,
+  minSpeedPx: 0.6,
 }
 
 /**

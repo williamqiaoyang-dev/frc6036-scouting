@@ -1,9 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DetectorEngine, type Detector, type DetectorEvent } from '@/lib/detectors'
 import { sampleHue, type Detection } from '@/lib/vision'
+import type { Track } from '@/lib/tracker'
+import {
+  creditEvent, learnRobot, RobotWatcher,
+  type RobotLock, type RobotSighting, type ShotCredit,
+} from '@/lib/robotLock'
 
-/** Frames are processed at this width; height follows the aspect ratio. */
-const PROC_WIDTH = 320
+export type { ShotCredit }
+
+/**
+ * Frames are processed at this width; height follows the aspect ratio.
+ *
+ * 640 rather than the 320 this started at, and the difference is not
+ * cosmetic. A FUEL ball is about 1.5% of the frame width in a shot that
+ * takes in the whole field, which at 320px is a two-pixel radius — below
+ * any usable size threshold, and the reason a scan of real footage used to
+ * report nothing whatsoever. Doubling the width quadruples the pixels on
+ * the ball, which is what makes it findable at all.
+ */
+export const PROC_WIDTHS = [320, 480, 640, 854] as const
+export const DEFAULT_PROC_WIDTH = 640
 
 /**
  * Runs every enabled detector against a <video>, whatever is behind it: a
@@ -25,7 +42,8 @@ const PROC_WIDTH = 320
  * surfaces as `blocked` rather than a silent absence of detections.
  */
 export function useDetectors({
-  video, detectors, liveLoop, track, onEvent,
+  video, detectors, liveLoop, track, onEvent, procWidth = DEFAULT_PROC_WIDTH,
+  robotLock = null,
 }: {
   video: HTMLVideoElement | null
   detectors: Detector[]
@@ -33,25 +51,33 @@ export function useDetectors({
   liveLoop: boolean
   /** The stream's video track, when the source is a stream. */
   track?: MediaStreamTrack | null
-  onEvent: (event: DetectorEvent) => void
+  onEvent: (event: DetectorEvent, credit: ShotCredit) => void
+  /** Processing resolution. Higher finds smaller things and costs more. */
+  procWidth?: number
+  /** The robot being followed, if the scout has picked one. */
+  robotLock?: RobotLock | null
 }) {
   const engine = useMemo(() => new DetectorEngine(detectors), [])
+  const watcher = useMemo(() => new RobotWatcher(), [])
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const frameRef = useRef<ImageData | null>(null)
   const onEventRef = useRef(onEvent)
-  const processRef = useRef<(src?: any) => void>(() => {})
+  const processRef = useRef<(src?: any, preview?: boolean) => void>(() => {})
 
   const [detections, setDetections] = useState<{ detectorId: string; detections: Detection[] }[]>([])
-  const [procHeight, setProcHeight] = useState(180)
+  const [paths, setPaths] = useState<{ detectorId: string; tracks: Track[] }[]>([])
+  const [robot, setRobot] = useState<RobotSighting | null>(null)
+  const [procHeight, setProcHeight] = useState(Math.round(procWidth * 9 / 16))
   const [fps, setFps] = useState(0)
   const [blocked, setBlocked] = useState(false)
 
   useEffect(() => { onEventRef.current = onEvent }, [onEvent])
   useEffect(() => { engine.setDetectors(detectors) }, [engine, detectors])
+  useEffect(() => { watcher.setLock(robotLock) }, [watcher, robotLock])
 
   // Build the frame reader. Independent of how it is driven.
   useEffect(() => {
-    if (!video) { processRef.current = () => {}; setDetections([]); return }
+    if (!video) { processRef.current = () => {}; setDetections([]); setPaths([]); return }
 
     if (!canvasRef.current) canvasRef.current = document.createElement('canvas')
     const canvas = canvasRef.current
@@ -61,8 +87,14 @@ export function useDetectors({
     let stopped = false
     let lastTick = performance.now()
     let smoothed = 0
+    // The overlay is redrawn from React state, and a seek-driven scan calls
+    // this thousands of times as fast as the file decodes. Publishing every
+    // frame would put more time into re-rendering the overlay than into
+    // reading the video; twelve updates a second is past the point anyone
+    // can see, and events themselves are never throttled.
+    let lastPublish = 0
 
-    processRef.current = (src?: any) => {
+    processRef.current = (src?: any, preview = false) => {
       if (stopped) return
       if (!src && video.readyState < 2) return
 
@@ -70,18 +102,18 @@ export function useDetectors({
       const sh = src ? src.displayHeight : video.videoHeight
       if (!sw || !sh) return
 
-      const h = Math.round(PROC_WIDTH * (sh / sw))
-      if (canvas.width !== PROC_WIDTH || canvas.height !== h) {
-        canvas.width = PROC_WIDTH
+      const h = Math.round(procWidth * (sh / sw))
+      if (canvas.width !== procWidth || canvas.height !== h) {
+        canvas.width = procWidth
         canvas.height = h
         setProcHeight(h)
       }
 
-      ctx.drawImage(src ?? video, 0, 0, PROC_WIDTH, h)
+      ctx.drawImage(src ?? video, 0, 0, procWidth, h)
 
       let frame: ImageData
       try {
-        frame = ctx.getImageData(0, 0, PROC_WIDTH, h)
+        frame = ctx.getImageData(0, 0, procWidth, h)
       } catch {
         setBlocked(true)
         stopped = true
@@ -89,21 +121,43 @@ export function useDetectors({
       }
       frameRef.current = frame
 
+      // A preview reads the picture and reports what is in it, without
+      // advancing a single track or firing a single rule — otherwise
+      // dragging the scrub bar would invent shots.
+      if (preview) {
+        engine.observe(frame, procWidth, h)
+        setDetections(engine.detections())
+        return
+      }
+
       // Video time is the clock, so a scan yields the same events however
       // fast it ran.
       const at = video.currentTime * 1000
-      for (const ev of engine.update(frame, PROC_WIDTH, h, at)) onEventRef.current(ev)
-      setDetections(engine.detections())
+
+      // The robot is followed *before* the detectors run, so a shot found
+      // this frame can be credited against a position from this frame.
+      const seen = watcher.update(frame, procWidth, h, at)
+
+      for (const ev of engine.update(frame, procWidth, h, at)) {
+        onEventRef.current(ev, creditEvent(watcher, ev))
+      }
 
       const now = performance.now()
       smoothed = smoothed * 0.9 + (1000 / Math.max(1, now - lastTick)) * 0.1
       lastTick = now
-      setFps(Math.round(smoothed))
+
+      if (now - lastPublish >= 80) {
+        lastPublish = now
+        setDetections(engine.detections())
+        setPaths(engine.paths())
+        setRobot(seen)
+        setFps(Math.round(smoothed))
+      }
     }
 
     setBlocked(false)
     return () => { stopped = true }
-  }, [video, engine])
+  }, [video, engine, watcher, procWidth])
 
   // Live loop: track-reader where there is a track, repaint loop otherwise.
   useEffect(() => {
@@ -152,17 +206,37 @@ export function useDetectors({
   /** Read the frame currently displayed. Used by the seek-driven scan. */
   const processFrame = useCallback(() => processRef.current(), [])
 
+  /**
+   * Show what the detectors can see in the frame on screen, changing
+   * nothing. Safe to call while scrubbing, sampling or aiming.
+   */
+  const previewFrame = useCallback(() => processRef.current(undefined, true), [])
+
   /** Sample the colour under a normalised point — used to calibrate. */
   const sampleAt = useCallback((nx: number, ny: number) => {
-    if (!frameRef.current) processRef.current()
+    if (!frameRef.current) processRef.current(undefined, true)
     const frame = frameRef.current
     return frame ? sampleHue(frame, nx, ny) : null
   }, [])
 
-  const reset = useCallback(() => engine.reset(), [engine])
+  /**
+   * Learn a robot from a click: colour *and* size, measured off the frame.
+   * Returns the appearance to lock with, or null when the spot is unusable.
+   */
+  const learnRobotAt = useCallback((nx: number, ny: number) => {
+    if (!frameRef.current) processRef.current(undefined, true)
+    const frame = frameRef.current
+    if (!frame) return null
+    const learned = learnRobot(frame, nx, ny)
+    if (!learned) return null
+    watcher.seed(nx, ny, learned.radius, (video?.currentTime ?? 0) * 1000)
+    return learned.appearance
+  }, [watcher, video])
+
+  const reset = useCallback(() => { engine.reset(); watcher.reset() }, [engine, watcher])
 
   return {
-    detections, blocked, fps, sampleAt, reset, processFrame,
-    procWidth: PROC_WIDTH, procHeight,
+    detections, paths, robot, blocked, fps, sampleAt, learnRobotAt,
+    reset, processFrame, previewFrame, procWidth, procHeight,
   }
 }

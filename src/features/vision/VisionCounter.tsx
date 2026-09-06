@@ -55,6 +55,8 @@ export function VisionCounter({
   const [counts, setCounts] = useState<Record<string, number>>({})
 
   const [drawing, setDrawing] = useState<string | null>(null)
+  /** Two clicks for a box, or a traced polygon. See FilmAnalyzer for why. */
+  const [drawMode, setDrawMode] = useState<'box' | 'poly'>('box')
   const [sampling, setSampling] = useState<string | null>(null)
   const [draft, setDraft] = useState<Point[]>([])
   const [tuned, setTuned] = useState(fuelDetectorId)
@@ -62,9 +64,13 @@ export function VisionCounter({
   const active = mode === 'static' || mode === 'dynamic'
   const armed = detectors.filter((d) => d.enabled && d.zone.length >= 3)
 
-  const { detections, fps, sampleAt, reset, processFrame, procWidth, procHeight } =
+  const { detections, paths, fps, sampleAt, reset, previewFrame, procWidth, procHeight } =
     useDetectors({
       video, detectors,
+      // Lower than film review on purpose: this runs on a phone in the
+      // stands at thirty frames a second, and a scout who has to wait for
+      // the overlay has already missed the shot.
+      procWidth: 480,
       liveLoop: streaming && active,
       track,
       onEvent: (e) => {
@@ -73,6 +79,13 @@ export function VisionCounter({
         onEvent(e)
       },
     })
+
+  /** What each detector can pick out of the current frame, area or no area. */
+  const seeing = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const g of detections) out[g.detectorId] = g.detections.length
+    return out
+  }, [detections])
 
   // The mode buttons choose how the FUEL detector decides a ball scored.
   useEffect(() => {
@@ -139,7 +152,7 @@ export function VisionCounter({
     if (!canvas) return
     drawDetectorOverlay(canvas, {
       detectors, colorOf: (id) => detectorColor(detectors, id),
-      seen: detections, draft, drawingId: drawing, procWidth, procHeight,
+      seen: detections, paths, draft, drawingId: drawing, procWidth, procHeight,
     })
   }, [detections, detectors, draft, drawing, procWidth, procHeight])
 
@@ -147,7 +160,18 @@ export function VisionCounter({
     const r = e.currentTarget.getBoundingClientRect()
     const p = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }
 
-    if (drawing) { setDraft((d) => [...d, p]); return }
+    if (drawing) {
+      if (drawMode === 'poly') { setDraft((d) => [...d, p]); return }
+      if (!draft.length) { setDraft([p]); return }
+      const a = draft[0]
+      applyZone(drawing, [
+        { x: Math.min(a.x, p.x), y: Math.min(a.y, p.y) },
+        { x: Math.max(a.x, p.x), y: Math.min(a.y, p.y) },
+        { x: Math.max(a.x, p.x), y: Math.max(a.y, p.y) },
+        { x: Math.min(a.x, p.x), y: Math.max(a.y, p.y) },
+      ])
+      return
+    }
     if (sampling) {
       const s = sampleAt(p.x, p.y)
       if (s && s.value > 0.08) {
@@ -165,17 +189,25 @@ export function VisionCounter({
     }
   }
 
-  function finishZone() {
-    if (drawing && draft.length >= 3) {
-      onDetectorsChange(detectors.map((d) =>
-        d.id === drawing ? { ...d, zone: draft, enabled: true } : d))
-    }
+  function applyZone(id: string, zone: Point[]) {
+    onDetectorsChange(detectors.map((d) => d.id === id ? { ...d, zone, enabled: true } : d))
     setDraft([])
     setDrawing(null)
     reset()
   }
 
-  useEffect(() => { if (sampling) processFrame() }, [sampling, processFrame])
+  function finishZone() {
+    if (drawing && draft.length >= 3) applyZone(drawing, draft)
+    else { setDraft([]); setDrawing(null) }
+  }
+
+  /** The whole picture — proves the colour works, but counts everywhere. */
+  function coverFrame(id: string) {
+    applyZone(id, [{ x: 0.01, y: 0.01 }, { x: 0.99, y: 0.01 },
+                   { x: 0.99, y: 0.99 }, { x: 0.01, y: 0.99 }])
+  }
+
+  useEffect(() => { if (sampling) previewFrame() }, [sampling, previewFrame])
 
   const hitRecently = Date.now() - lastHit < 350
   const modes: [CameraMode, string, string][] = [
@@ -242,7 +274,11 @@ export function VisionCounter({
               {(drawing || sampling) && (
                 <div className="absolute inset-x-0 top-0 bg-signal px-2 py-1 text-[12px] font-600 text-deck-900">
                   {drawing
-                    ? `Click the corners of the area for “${detectors.find((d) => d.id === drawing)?.label}”, then Finish. ${draft.length} placed.`
+                    ? drawMode === 'box'
+                      ? (draft.length
+                          ? `Now tap the opposite corner of the area for “${detectors.find((d) => d.id === drawing)?.label}”.`
+                          : `Tap one corner of the area for “${detectors.find((d) => d.id === drawing)?.label}”, then the opposite one.`)
+                      : `Click the corners of the area for “${detectors.find((d) => d.id === drawing)?.label}”, then Finish. ${draft.length} placed.`
                     : `Click the thing “${detectors.find((d) => d.id === sampling)?.label}” should look for.`}
                 </div>
               )}
@@ -251,8 +287,15 @@ export function VisionCounter({
             <div className="mt-2 flex flex-wrap gap-1.5">
               {drawing ? (
                 <>
-                  <button type="button" onClick={finishZone} disabled={draft.length < 3}
-                    className="btn-primary h-8 py-0 text-[13px] disabled:opacity-30">Finish area</button>
+                  {drawMode === 'poly' && (
+                    <button type="button" onClick={finishZone} disabled={draft.length < 3}
+                      className="btn-primary h-8 py-0 text-[13px] disabled:opacity-30">Finish area</button>
+                  )}
+                  {drawMode === 'box' && (
+                    <span className="text-[13px] text-signal">
+                      {draft.length ? 'Tap the opposite corner.' : 'Tap one corner of the goal.'}
+                    </span>
+                  )}
                   <button type="button" onClick={() => { setDraft([]); setDrawing(null) }}
                     className="btn-ghost h-8 py-0 text-[13px]">Cancel</button>
                 </>
@@ -263,12 +306,41 @@ export function VisionCounter({
               )}
             </div>
 
-            {!armed.length && (
-              <p className="mt-2 text-[12px] leading-snug text-signal">
-                No detector has an area drawn yet. Nothing is counted until one does —
-                that is what keeps balls on the floor out of the count.
-              </p>
-            )}
+            {!armed.length && (() => {
+              // Same reasoning as film review: the rule that blocks you and
+              // the button that satisfies it belong in the same place.
+              const target = detectors.find((d) => d.id === fuelDetectorId)
+                ?? detectors.find((d) => d.enabled) ?? detectors[0]
+              const totalSeen = Object.values(seeing).reduce((a, b) => a + b, 0)
+              if (!target) return null
+              return (
+                <div className="mt-2 rounded-panel border border-signal/40 bg-signal/5 p-2">
+                  <p className="text-[12px] leading-snug text-signal">
+                    Nothing is counted until “{target.label}” has an area — that is what
+                    keeps balls on the floor out of the count.
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <button type="button"
+                      onClick={() => { setSampling(null); setDraft([]); setDrawMode('box'); setDrawing(target.id) }}
+                      className="btn-primary h-7 py-0 text-[12px]">
+                      Tap a box over the goal
+                    </button>
+                    <button type="button" onClick={() => coverFrame(target.id)}
+                      className="btn-ghost h-7 py-0 text-[12px]"
+                      title="Counts a ball anywhere in the picture, so it over-counts. Use it to check the colour, then draw the real area.">
+                      Use the whole frame
+                    </button>
+                  </div>
+                  <p className="mt-1.5 text-[12px] leading-snug text-chalk-faint">
+                    {totalSeen > 0
+                      ? `Colour is working — ${totalSeen} thing${totalSeen === 1 ? '' : 's'} `
+                        + 'picked out of this frame. Only the area is missing.'
+                      : 'Nothing picked out of this frame either — use “Sample colour” '
+                        + 'and tap a real FUEL ball first.'}
+                  </p>
+                </div>
+              )
+            })()}
             {missedSec > 0 && (
               <p className="mt-2 flex items-center gap-2 text-[12px] leading-snug text-signal">
                 <span>
@@ -287,8 +359,10 @@ export function VisionCounter({
               detectors={detectors}
               onChange={onDetectorsChange}
               counts={counts}
+              seeing={seeing}
+              onCover={coverFrame}
               drawing={drawing}
-              onDraw={(id) => { setSampling(null); setDraft([]); setDrawing(id) }}
+              onDraw={(id, mode) => { setSampling(null); setDraft([]); setDrawMode(mode); setDrawing(id) }}
               onSample={(id) => { setDrawing(null); setDraft([]); setSampling(id) }}
               targetLabel={() => ''}
             />

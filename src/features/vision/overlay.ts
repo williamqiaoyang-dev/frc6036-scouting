@@ -1,5 +1,7 @@
 import type { Detection, VisionConfig } from '@/lib/vision'
 import type { Detector } from '@/lib/detectors'
+import type { Track } from '@/lib/tracker'
+import type { RobotSighting } from '@/lib/robotLock'
 
 export interface Point { x: number; y: number }
 
@@ -85,11 +87,17 @@ export function drawVisionOverlay(
 export function drawDetectorOverlay(
   canvas: HTMLCanvasElement,
   {
-    detectors, colorOf, seen, draft, drawingId, procWidth, procHeight,
+    detectors, colorOf, seen, paths, robot, robotTeam,
+    draft, drawingId, procWidth, procHeight,
   }: {
     detectors: Detector[]
     colorOf: (id: string) => string
     seen: { detectorId: string; detections: Detection[] }[]
+    /** Confirmed tracks, drawn as the trail each thing has taken. */
+    paths?: { detectorId: string; tracks: Track[] }[]
+    /** The robot being followed, if the scout picked one. */
+    robot?: RobotSighting | null
+    robotTeam?: number | null
     draft: Point[]
     drawingId: string | null
     procWidth: number
@@ -149,17 +157,59 @@ export function drawDetectorOverlay(
     })
   }
 
+  // ---- flight paths -------------------------------------------------------
+  // Drawn under the detections, because the trail is what tells an operator
+  // whether the tracker is following one ball or repeatedly losing it and
+  // starting again. A count that looks right for the wrong reason is the
+  // thing this is here to expose.
+  for (const group of paths ?? []) {
+    const d = detectors.find((x) => x.id === group.detectorId)
+    if (!d?.enabled) continue
+    ctx.strokeStyle = colorOf(group.detectorId) + '88'
+    ctx.lineWidth = 1.5
+    for (const t of group.tracks) {
+      if (t.path.length < 2) continue
+      ctx.beginPath()
+      t.path.forEach((p, i) => (i ? ctx.lineTo(p.x * w, p.y * h) : ctx.moveTo(p.x * w, p.y * h)))
+      ctx.stroke()
+    }
+  }
+
   const sx = w / procWidth
   const sy = h / Math.max(1, procHeight)
   for (const group of seen) {
     const d = detectors.find((x) => x.id === group.detectorId)
     if (!d?.enabled) continue
-    ctx.strokeStyle = colorOf(group.detectorId)
-    ctx.lineWidth = 2
+    const colour = colorOf(group.detectorId)
     for (const det of group.detections) {
+      // Ring weight carries the detector's own confidence, so a marginal
+      // blob reads as marginal rather than as a decision already made.
+      ctx.strokeStyle = colour
+      ctx.globalAlpha = 0.35 + det.score * 0.65
+      ctx.lineWidth = det.score > 0.7 ? 2 : 1
       ctx.beginPath()
       ctx.arc(det.x * sx, det.y * sy, Math.max(5, det.radius * sx), 0, Math.PI * 2)
       ctx.stroke()
+      ctx.globalAlpha = 1
     }
+  }
+
+  // ---- the robot being followed -------------------------------------------
+  // A square rather than a ring, so it can never be mistaken for a ball, and
+  // dashed while the lock is coasting — an operator has to be able to see
+  // the difference between "following it" and "guessing where it went".
+  if (robot) {
+    const cx = robot.x * w, cy = robot.y * h
+    const r = Math.max(14, robot.r * w * 1.15)
+    const solid = robot.confidence >= 0.45
+    ctx.strokeStyle = solid ? '#FFC400' : '#FFC40088'
+    ctx.lineWidth = 2
+    ctx.setLineDash(solid ? [] : [4, 4])
+    ctx.strokeRect(cx - r, cy - r, r * 2, r * 2)
+    ctx.setLineDash([])
+    ctx.fillStyle = '#FFC400'
+    ctx.fillText(
+      robotTeam ? `${robotTeam}${solid ? '' : ' — lost'}` : 'tracked robot',
+      cx - r, cy - r - 5)
   }
 }
