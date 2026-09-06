@@ -1,5 +1,6 @@
 import { detectBlobs, sampleHue, type Appearance, type Detection } from './vision'
 import { Tracker, type Track } from './tracker'
+import { matchRegion, type RobotSignature } from './robotSignature'
 
 /**
  * Following one robot, so a shot can be credited to it.
@@ -25,6 +26,16 @@ export interface RobotLock {
   alliance: 'red' | 'blue' | ''
   /** Learned by clicking the robot, not guessed from the alliance colour. */
   appearance: Appearance
+  /**
+   * Built from a photograph of this robot, when one was supplied.
+   *
+   * A colour threshold cannot tell one red robot from another red robot;
+   * that is not a shortcoming of the threshold, it is that they are the same
+   * colour. A photograph carries the rest of the robot — the intake, the
+   * polycarb, the wrap, whatever is not bumper — and comparing that is what
+   * separates three machines a hue never could.
+   */
+  signature?: RobotSignature
 }
 
 export interface RobotSighting {
@@ -270,6 +281,7 @@ export class RobotFleet {
     this.h = h
     this.at = atMs
 
+    this.frame = frame
     const found = detectBlobs(frame, this.lock.appearance)
     this.tracker.update(found, w, h, atMs)
 
@@ -292,10 +304,17 @@ export class RobotFleet {
     const bloated = mine != null && this.baseArea > 0
       && mine.rawPixels / this.baseArea > 1.35
 
+    // With a photo, the follow is checked every frame rather than trusted
+    // because it was right last frame. A lock that has drifted onto a
+    // partner stops matching the photo, and saying so early is the
+    // difference between one wrong shot and a whole match of them.
+    const drifted = mine != null && this.lock.signature != null
+      && this.appearanceScore(mine) < 0.32
+
     // Entering uncertainty: the blob has swallowed a neighbour, or the track
     // is simply gone. Remember how many robots were on screen beforehand —
     // that count is what says when the tangle has come apart again.
-    if ((bloated || !mine) && !this.uncertain && this.lastGood) {
+    if ((bloated || drifted || !mine) && !this.uncertain && this.lastGood) {
       this.uncertain = true
       this.preMergeCount = Math.max(this.lastCount, visible + 1)
       this.missing = 0
@@ -316,8 +335,10 @@ export class RobotFleet {
       const candidate = resolved && this.lastGood
         ? this.nearestTo(this.predX, this.predY, this.lastGood.r, 0.13, true)
         : null
+      const convincing = !candidate || !this.lock.signature
+        || this.appearanceScore(candidate) >= 0.32
 
-      if (candidate && this.missing <= 150) {
+      if (candidate && convincing && this.missing <= 150) {
         this.uncertain = false
         this.selectedId = candidate.id
         this.missing = 0
@@ -403,11 +424,29 @@ export class RobotFleet {
       if (dist > within) continue
       const sizeGap = Math.abs(t.radius / this.w - r) / Math.max(0.01, r)
       if (sizeGap > 1.4) continue
-      const cost = dist + sizeGap * 0.05
+      // With a photo, how much this looks like *the* robot outweighs how
+      // close it happens to be — which is the whole point, because the thing
+      // that keeps stealing the lock is always the one that is closer.
+      const look = 1 - this.appearanceScore(t)
+      const cost = dist + sizeGap * 0.05 + look * 0.25
       if (cost < bestCost) { bestCost = cost; best = t }
     }
     return best
   }
+
+  /**
+   * How much a track looks like the photographed robot, 0-1.
+   * 0.5 — no opinion — when there is no photo to compare against.
+   */
+  private appearanceScore(t: Track): number {
+    const sig = this.lock?.signature
+    if (!sig || !this.frame) return 0.5
+    const half = Math.max(6, t.radius * 1.3)
+    return matchRegion(this.frame, sig, t.x, t.y, half, half * 0.8)
+  }
+
+  /** The frame being processed, so candidates can be compared to the photo. */
+  private frame: ImageData | null = null
 
   /** Frame size of the last update, so `robots` can normalise without args. */
   private w = 1

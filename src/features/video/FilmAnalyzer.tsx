@@ -106,6 +106,8 @@ export function FilmAnalyzer({
   /** Drawing an area to *exclude* rather than to count in. */
   const [masking, setMasking] = useState<string | null>(null)
   const [finding, setFinding] = useState('')
+  const photoRef = useRef<HTMLInputElement>(null)
+  const [photoNote, setPhotoNote] = useState('')
   /** Pointer position while drawing a box, for a rubber-band preview. */
   const [hover, setHover] = useState<Point | null>(null)
   const [sampling, setSampling] = useState<string | null>(null)
@@ -144,8 +146,9 @@ export function FilmAnalyzer({
   }, [])
 
   const {
-    detections, paths, scenery, robot, robots, trail, blocked, sampleAt,
-    pickRobotAt, findZone, reset, resetAll, processFrame, previewFrame, procHeight,
+    detections, paths, scenery, tints, robot, robots, trail, blocked, sampleAt,
+    pickRobotAt, findZone, learnFromPhoto,
+    reset, resetAll, processFrame, previewFrame, procHeight,
   } = useDetectors({
     video, detectors, procWidth, robotLock: lock,
     // Only a stream needs the live loop; a file is scanned by seeking,
@@ -381,11 +384,11 @@ export function FilmAnalyzer({
     if (!canvas) return
     drawDetectorOverlay(canvas, {
       detectors, colorOf: (id) => detectorColor(detectors, id),
-      seen: detections, paths, scenery, robot, robots, trail,
+      seen: detections, paths, scenery, tints, robot, robots, trail,
       robotTeam: lock?.team ?? null,
       draft: preview, drawingId: drawing, procWidth, procHeight,
     })
-  }, [detections, paths, scenery, robot, robots, trail, lock, detectors,
+  }, [detections, paths, scenery, tints, robot, robots, trail, lock, detectors,
       preview, drawing, procWidth, procHeight])
 
   function onCanvasClick(e: React.MouseEvent<HTMLCanvasElement>) {
@@ -531,6 +534,56 @@ export function FilmAnalyzer({
     setFinding(`Proposed from ${proposal.support} balls that ended there `
       + `(${Math.round(proposal.share * 100)}% of everything tracked). `
       + 'Redraw it by hand if it looks wrong.')
+  }
+
+  /**
+   * Build the robot's appearance model from a photograph of it.
+   *
+   * A colour threshold cannot tell one red robot from another red robot —
+   * they are the same colour, and no amount of tuning changes that. A photo
+   * carries everything that is *not* bumper, and comparing that is what
+   * separates three machines on the same alliance.
+   *
+   * The photo should be mostly robot, roughly centred, taken anywhere: the
+   * pit, a match, the queue. The middle is read as the robot and the outer
+   * border as its surroundings, so a tight shot works far better than one
+   * with the whole field in it.
+   */
+  async function usePhoto(file: File) {
+    setPhotoNote('Reading the photo…')
+    setError('')
+    try {
+      const bitmap = await createImageBitmap(file)
+      // Downscaled: the fit needs colour, not detail, and a 12-megapixel
+      // phone photo would cost seconds for no gain whatsoever.
+      const scale = Math.min(1, 320 / Math.max(bitmap.width, bitmap.height))
+      const cw = Math.max(32, Math.round(bitmap.width * scale))
+      const ch = Math.max(32, Math.round(bitmap.height * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = cw; canvas.height = ch
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })
+      if (!ctx) throw new Error('no canvas')
+      ctx.drawImage(bitmap, 0, 0, cw, ch)
+      bitmap.close?.()
+
+      const signature = learnFromPhoto(ctx.getImageData(0, 0, cw, ch))
+      const alliance: 'red' | 'blue' = team && match.red.includes(team) ? 'red' : 'blue'
+      setLock({ team, alliance, appearance: signature.appearance, signature })
+      reset()
+
+      const pct = Math.round(signature.quality * 100)
+      setPhotoNote(
+        `Fitted in ${signature.iterations} steps`
+        + `${signature.improvements ? ` (${signature.improvements} improved it)` : ' — the first guess was already right'}`
+        + `. Separation ${pct}%. `
+        + (signature.quality >= 0.45
+            ? 'Good enough to tell this robot from its partners.'
+            : 'Low — the robot is too close in colour to its background in that photo. '
+              + 'Try one where it stands out, or fill more of the frame with it.'))
+    } catch {
+      setPhotoNote('')
+      setError('That image could not be read. A JPEG or PNG of the robot works best.')
+    }
   }
 
   function startDrawing(id: string, mode: 'box' | 'poly') {
@@ -923,6 +976,16 @@ export function FilmAnalyzer({
                 {locking ? 'Click the robot…' : lock ? `Re-point at ${lock.team}` : 'Point at it on the video'}
               </button>
 
+              <input ref={photoRef} type="file" accept="image/*" className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) usePhoto(f); e.target.value = '' }} />
+              <button type="button" disabled={!team} onClick={() => photoRef.current?.click()}
+                title="A photo of the robot — mostly robot, roughly centred. Its colours are what tell it apart from partners wearing the same bumpers."
+                className={clsx('h-7 rounded-panel border px-2 text-[12px] font-600 transition disabled:opacity-30',
+                  lock?.signature ? 'border-emerald-400/50 text-emerald-300'
+                    : 'border-deck-500 text-chalk-dim hover:bg-deck-600 hover:text-chalk')}>
+                {lock?.signature ? 'Photo loaded ✓' : 'Use a photo of the robot'}
+              </button>
+
               {!team && (
                 <span className="text-[12px] text-chalk-faint">
                   pick the team above first
@@ -933,6 +996,10 @@ export function FilmAnalyzer({
                   optional — without it every hit is credited to {team}
                 </span>
               )}
+              {photoNote && (
+                <span className="basis-full text-[12px] leading-snug text-chalk-dim">{photoNote}</span>
+              )}
+
               {lock && (
                 <>
                   <span className={clsx('rounded px-1.5 text-[11px] font-600',

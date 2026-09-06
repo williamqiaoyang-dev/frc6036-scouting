@@ -8,6 +8,10 @@ import { detectBlobs, roundness, sampleHue, rgbToHsv } from '../vision.ts'
 import { Tracker, headingTowards } from '../tracker.ts'
 import { learnRobot, RobotFleet, attributeShot, creditEvent, allianceLook } from '../robotLock.ts'
 import { proposeZone, explainFailure } from '../autoZone.ts'
+import {
+  buildSignature, matchRegion, histogramMatch, regionHistogram,
+  fitAppearance, seedAppearance, robotBox,
+} from '../robotSignature.ts'
 import { DetectorEngine, type Detector } from '../detectors.ts'
 
 // The processing resolution the app actually uses.
@@ -443,7 +447,90 @@ console.log('\n8. Following a whole alliance, and knowing which one is yours')
   check('changing team forgets the old selection', fleet.sighting === null)
 }
 
-console.log('\n9. End to end: a shot, found and credited, off one pass')
+console.log('\n9. Recognising a robot from a photograph of it')
+{
+  /** A photo of a robot: a bumper, a distinctive intake, on some carpet. */
+  function photo(
+    bumper: number[], intake: number[], carpet: number[],
+  ): ImageData {
+    const PW = 240, PH = 180
+    const d = new Uint8ClampedArray(PW * PH * 4)
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (Math.random() - 0.5) * 12
+      d[i] = carpet[0] + n; d[i + 1] = carpet[1] + n; d[i + 2] = carpet[2] + n; d[i + 3] = 255
+    }
+    // Lit from the top left and noisy, like a photograph rather than a
+    // diagram — a fit that only works on flat colour is no use at a venue.
+    const put = (x0: number, y0: number, x1: number, y1: number, c: number[]) => {
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+        const i = (y * PW + x) * 4
+        const lit = 0.72 + 0.38 * (1 - (x - x0 + (y - y0)) / ((x1 - x0) + (y1 - y0)))
+        const n = (Math.random() - 0.5) * 16
+        d[i] = c[0] * lit + n; d[i + 1] = c[1] * lit + n; d[i + 2] = c[2] * lit + n
+      }
+    }
+    put(58, 60, 182, 130, bumper)
+    put(92, 44, 148, 62, intake)
+    return { data: d, width: PW, height: PH } as ImageData
+  }
+
+  const mine = photo([214, 44, 54], [70, 210, 120], [70, 74, 80])
+  const sig = buildSignature(mine, { iterations: 200 })
+
+  check('a photo produces a usable search', sig.quality > 0.3, sig.quality.toFixed(2))
+  // From the histogram seed the fit usually has nothing to do — the seed is
+  // already the answer — and stopping early is correct rather than a failure.
+  // What must hold is that it stopped because it converged, not because it
+  // ran out of budget.
+  check('stops early when the seed was already right',
+    sig.iterations < 200 && sig.quality > 0.5,
+    `${sig.improvements} improvements in ${sig.iterations} steps, q=${sig.quality.toFixed(2)}`)
+  check('and it is deterministic — two scouts get the same setup',
+    Math.abs(buildSignature(mine, { iterations: 200 }).appearance.hue - sig.appearance.hue) < 1e-9)
+
+  // The point of the photo: telling two robots of the same alliance apart.
+  const partner = photo([214, 44, 54], [235, 225, 60], [70, 74, 80])
+  const mineScore = matchRegion(mine, sig, 120, 90, 62, 45)
+  const theirsScore = matchRegion(partner, sig, 120, 90, 62, 45)
+  check('matches the robot it was built from', mineScore > 0.55, mineScore.toFixed(2))
+  check('and scores a same-bumper partner lower',
+    theirsScore < mineScore - 0.1, `${theirsScore.toFixed(2)} vs ${mineScore.toFixed(2)}`)
+
+  // Carpet is not a robot.
+  const empty = matchRegion(mine, sig, 20, 165, 18, 12)
+  check('and scores empty carpet lowest of all', empty < theirsScore, empty.toFixed(2))
+
+  check('histogram intersection is bounded and self-consistent', (() => {
+    const a = regionHistogram(mine, 58, 60, 182, 130)
+    return Math.abs(histogramMatch(a, a) - 1) < 0.01
+  })())
+
+  // More iterations must never make the fit worse than fewer.
+  const quick = buildSignature(mine, { iterations: 24 })
+  check('a longer fit is never worse than a short one',
+    sig.quality >= quick.quality - 1e-6,
+    `${quick.quality.toFixed(3)} -> ${sig.quality.toFixed(3)}`)
+
+  // The fit has to be able to climb, not just sit on a good seed. Started on
+  // cyan for a red robot, a hard pass-or-fail objective scores zero in every
+  // direction and the fit cannot move at all — which is what it did before
+  // the objective was given a slope through its dead zone.
+  const box = robotBox(mine)
+  const wrong = { ...seedAppearance(sig.hist, mine), hue: 185, hueTolerance: 9,
+                  minSaturation: 0.55, minValue: 0.6 }
+  const stuck = fitAppearance(mine, wrong, box.x0, box.y0, box.x1, box.y1, 1)
+  const climbed = fitAppearance(mine, wrong, box.x0, box.y0, box.x1, box.y1, 400)
+  check('climbs out of a deliberately wrong start',
+    climbed.score > stuck.score + 0.5,
+    `${stuck.score.toFixed(2)} -> ${climbed.score.toFixed(2)}`)
+  check('and lands on the robot\'s actual colour',
+    Math.min(Math.abs(climbed.appearance.hue - 356), 360 - Math.abs(climbed.appearance.hue - 356)) < 25,
+    `hue ${climbed.appearance.hue.toFixed(0)}`)
+  check('and more steps got it further than fewer',
+    climbed.score > fitAppearance(mine, wrong, box.x0, box.y0, box.x1, box.y1, 100).score)
+}
+
+console.log('\n10. End to end: a shot, found and credited, off one pass')
 {
   // Everything at once, the way the app runs it: two robots of the same
   // colour, one of them shoots, the detector finds the shot, and the lock
@@ -499,7 +586,7 @@ console.log('\n9. End to end: a shot, found and credited, off one pass')
     theirs[0] ? `team ${theirs[0].team}, rejected ${theirs[0].rejected}` : '')
 }
 
-console.log('\n10. Looking without believing')
+console.log('\n11. Looking without believing')
 {
   // Scrubbing a video, sampling a colour and aiming at a robot all need the
   // detectors to report what is in the frame on screen. If that ran the real

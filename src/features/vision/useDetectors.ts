@@ -7,6 +7,7 @@ import {
   type RobotLock, type RobotSighting, type ShotCredit,
 } from '@/lib/robotLock'
 import { proposeZone, explainFailure, type ZoneProposal } from '@/lib/autoZone'
+import { buildSignature, type RobotSignature } from '@/lib/robotSignature'
 
 export type { ShotCredit }
 
@@ -69,6 +70,14 @@ export function useDetectors({
   const [paths, setPaths] = useState<{ detectorId: string; tracks: Track[] }[]>([])
   const [robot, setRobot] = useState<RobotSighting | null>(null)
   const [robots, setRobots] = useState<RobotSighting[]>([])
+  /**
+   * Which alliance each ball in flight came from, keyed by track.
+   *
+   * Worked out live rather than at the moment a shot counts, so a ball is
+   * already coloured while it is in the air. `null` means nobody knows,
+   * which is drawn grey — a colour that claims nothing.
+   */
+  const [tints, setTints] = useState<Record<number, 'red' | 'blue' | null>>({})
   const [scenery, setScenery] = useState<{ detectorId: string; at: { x: number; y: number; radius: number }[] }[]>([])
   const [procHeight, setProcHeight] = useState(Math.round(procWidth * 9 / 16))
   const [fps, setFps] = useState(0)
@@ -152,10 +161,25 @@ export function useDetectors({
       if (now - lastPublish >= 80) {
         lastPublish = now
         setDetections(engine.detections())
-        setPaths(engine.paths())
+        const groups = engine.paths()
+        setPaths(groups)
         setScenery(engine.scenery())
         setRobot(seen)
         setRobots(fleet.robots)
+
+        // Colour every ball in flight by whose it is.
+        const tint: Record<number, 'red' | 'blue' | null> = {}
+        const alliance = fleet.lock?.alliance
+        for (const g of groups) {
+          for (const t of g.tracks) {
+            const from = fleet.positionAt(t.originAt)
+            const near = from
+              && Math.hypot(t.originX / procWidth - from.x, t.originY / h - from.y)
+                 <= Math.max(0.13, from.r * 2.2)
+            tint[t.id] = near && alliance ? alliance : null
+          }
+        }
+        setTints(tint)
         setFps(Math.round(smoothed))
       }
     }
@@ -240,6 +264,16 @@ export function useDetectors({
 
   const reset = useCallback(() => { engine.reset(); fleet.reset() }, [engine, fleet])
 
+  /**
+   * Build a robot's appearance model from a photograph of it.
+   *
+   * Returns the signature and the fit's own account of itself, so the scout
+   * is told how well it separated the robot from its background rather than
+   * finding out during a match.
+   */
+  const learnFromPhoto = useCallback((photo: ImageData, steps?: number) =>
+    buildSignature(photo, steps ? { iterations: steps } : {}), [])
+
   /** Forget the harvested evidence as well as the tracking state. */
   const resetAll = useCallback(() => { engine.resetAll(); fleet.reset() }, [engine, fleet])
 
@@ -272,8 +306,8 @@ export function useDetectors({
   }, [engine])
 
   return {
-    detections, paths, scenery, robot, robots, trail: fleet.trail,
-    blocked, fps, sampleAt, learnRobotAt, pickRobotAt, findZone,
+    detections, paths, scenery, tints, robot, robots, trail: fleet.trail,
+    blocked, fps, sampleAt, learnRobotAt, pickRobotAt, findZone, learnFromPhoto,
     reset, resetAll, processFrame, previewFrame, procWidth, procHeight,
   }
 }

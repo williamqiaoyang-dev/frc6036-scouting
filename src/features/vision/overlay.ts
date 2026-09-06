@@ -84,17 +84,30 @@ export function drawVisionOverlay(
  * should not have, the operator needs to see *which* area caught it without
  * cross-referencing anything.
  */
+/**
+ * A ball's colour is a claim about whose it is, so the neutral case has to
+ * look neutral. Grey is not a shade of either alliance and reads as "not
+ * saying" rather than as a faint red.
+ */
+const ALLIANCE_INK = {
+  red: '#FF4D5A',
+  blue: '#3B8CFF',
+  neutral: '#9AA3AC',
+} as const
+
 export function drawDetectorOverlay(
   canvas: HTMLCanvasElement,
   {
-    detectors, colorOf, seen, paths, scenery, robot, robots, trail, robotTeam,
-    draft, drawingId, procWidth, procHeight,
+    detectors, colorOf, seen, paths, scenery, tints, robot, robots, trail,
+    robotTeam, draft, drawingId, procWidth, procHeight,
   }: {
     detectors: Detector[]
     colorOf: (id: string) => string
     seen: { detectorId: string; detections: Detection[] }[]
     /** Confirmed tracks, drawn as the trail each thing has taken. */
     paths?: { detectorId: string; tracks: Track[] }[]
+    /** Which alliance each ball in flight belongs to, keyed by track id. */
+    tints?: Record<number, 'red' | 'blue' | null>
     /** Positions currently judged to be scenery rather than in play. */
     scenery?: { detectorId: string; at: { x: number; y: number; radius: number }[] }[]
     /** The robot being followed, if the scout picked one. */
@@ -192,13 +205,30 @@ export function drawDetectorOverlay(
   for (const group of paths ?? []) {
     const d = detectors.find((x) => x.id === group.detectorId)
     if (!d?.enabled) continue
-    ctx.strokeStyle = colorOf(group.detectorId) + '88'
-    ctx.lineWidth = 1.5
     for (const t of group.tracks) {
-      if (t.path.length < 2) continue
+      if (t.scenery) continue
+      // The flight of a ball is drawn in the colour of whoever shot it, so a
+      // wrong attribution is visible as a wrong colour crossing the screen
+      // rather than as a number in a list nobody checks.
+      const ink = ALLIANCE_INK[tints?.[t.id] ?? 'neutral']
+      if (t.path.length >= 2) {
+        ctx.strokeStyle = ink + 'AA'
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        t.path.forEach((p, i) => (i ? ctx.lineTo(p.x * w, p.y * h) : ctx.moveTo(p.x * w, p.y * h)))
+        ctx.stroke()
+      }
+      // A ring on the ball itself, so a still frame reads as clearly as motion.
+      const known = (tints?.[t.id] ?? null) !== null
+      const sxr = w / procWidth
+      ctx.strokeStyle = ink
+      ctx.lineWidth = known ? 2.5 : 1.5
+      ctx.setLineDash(known ? [] : [3, 3])
       ctx.beginPath()
-      t.path.forEach((p, i) => (i ? ctx.lineTo(p.x * w, p.y * h) : ctx.moveTo(p.x * w, p.y * h)))
+      ctx.arc((t.x / procWidth) * w, (t.y / Math.max(1, procHeight)) * h,
+        Math.max(6, t.radius * sxr + 2), 0, Math.PI * 2)
       ctx.stroke()
+      ctx.setLineDash([])
     }
   }
 
